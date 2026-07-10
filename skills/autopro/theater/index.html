@@ -1,0 +1,2520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Show Time · Looplet</title>
+<style>
+:root{
+  --bg:#0a0c10;--panel:#12161e;--ink:#e8eef6;--muted:#8a97a8;
+  --cyan:#5eead4;--amber:#fbbf24;--rose:#fb7185;--lime:#a3e635;--orange:#f97316;
+  --pac:#fde047;--pellet:#f9a8d4;--line:rgba(197,208,222,.16);
+  --brushed:linear-gradient(145deg,#1a1f28,#2a3140 40%,#161b24);
+  --left:280px;--right:320px;
+  /* Match LOOPLET FLEET · ORCHESTRATOR head card — dock chats must not exceed this */
+  --orch-w:min(360px, 90vw);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--ink);font-family:"Segoe UI",system-ui,sans-serif;overflow:hidden}
+.app{display:grid;grid-template-rows:auto 1fr auto;height:100vh}
+/* Board is a pan/zoom surface — stop accidental giant text selections on click/drag */
+.board,.board-stage,.board-world,.claw-view,.claw-world,.claw-tree,.list-view,
+.lane,.claw-branch-card,.claw-head-card,.mission-float,.mission-bar,.canvas-tools,.canvas-hint{
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none
+}
+/* Allow typing / copying only in real form fields */
+input,textarea,[contenteditable="true"]{
+  -webkit-user-select:text;user-select:text
+}
+
+/* Header */
+.top{display:grid;grid-template-columns:minmax(160px,1fr) auto minmax(160px,1fr);gap:8px;align-items:center;
+  padding:10px 14px;background:var(--brushed);border-bottom:1px solid var(--line);z-index:20}
+.score .lab{font-size:9px;letter-spacing:.16em;color:var(--muted);font-weight:800}
+.score .val{font:800 18px ui-monospace,Consolas,monospace;color:var(--amber)}
+.score.r{text-align:right}.score.r .val{color:var(--cyan)}
+/* Single handover folder in header — opens modal with all notes */
+.ho-rail{display:flex;align-items:center;min-width:0;max-width:100%}
+.ho-folder-btn{
+  display:inline-flex;align-items:center;gap:10px;min-width:148px;max-width:220px;
+  padding:8px 12px 8px 10px;border-radius:12px;cursor:pointer;
+  border:1.5px solid rgba(251,191,36,.45);
+  background:linear-gradient(145deg,rgba(42,32,16,.95),rgba(18,16,12,.92));
+  color:var(--ink);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 4px 14px rgba(0,0,0,.25);
+  -webkit-user-select:none;user-select:none;text-align:left
+}
+.ho-folder-btn:hover{border-color:rgba(251,191,36,.7);filter:brightness(1.08)}
+.ho-folder-btn.has-pending{border-color:rgba(249,115,22,.6);animation:pulse 1.2s infinite}
+.ho-folder-btn .ico{font-size:22px;line-height:1;flex:none}
+.ho-folder-btn .meta{min-width:0;flex:1}
+.ho-folder-btn .meta .lab{font-size:9px;font-weight:900;letter-spacing:.12em;color:#fcd34d}
+.ho-folder-btn .meta .cnt{font-size:11px;font-weight:800;color:var(--ink);margin-top:2px}
+.ho-folder-btn .meta .hint{font-size:8px;color:var(--muted);margin-top:1px}
+.ho-folder-btn .badge{
+  flex:none;min-width:22px;height:22px;padding:0 6px;border-radius:999px;
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:10px;font-weight:900;background:rgba(251,191,36,.2);color:#fcd34d;
+  border:1px solid rgba(251,191,36,.35)
+}
+.ho-folder-btn.has-pending .badge{background:rgba(249,115,22,.25);color:#fdba74;border-color:rgba(249,115,22,.45)}
+.ho-modal{
+  position:fixed;inset:0;z-index:200;display:none;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.55);padding:20px
+}
+.ho-modal.on{display:flex}
+.ho-modal .card{
+  width:min(520px,94vw);max-height:min(78vh,640px);display:flex;flex-direction:column;
+  border-radius:12px;border:1px solid rgba(251,191,36,.4);
+  background:linear-gradient(160deg,#1a1610,#0e1218);padding:14px 16px;
+  box-shadow:0 20px 50px rgba(0,0,0,.5)
+}
+.ho-modal .card h3{font-size:12px;letter-spacing:.1em;color:#fcd34d;margin-bottom:4px;flex:none}
+.ho-modal .card .sub{font-size:10px;color:var(--muted);margin-bottom:10px;font-family:ui-monospace,Consolas,monospace;flex:none}
+.ho-modal .ho-list{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px}
+.ho-item{
+  border:1px solid var(--line);border-radius:10px;background:rgba(0,0,0,.32);padding:10px;
+  display:flex;flex-direction:column;gap:6px
+}
+.ho-item.pending{border-color:rgba(249,115,22,.4)}
+.ho-item .ho-item-h{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.ho-item .ho-item-h .who{font-size:11px;font-weight:800;color:#fcd34d}
+.ho-item .ho-item-h .when{font-size:9px;color:var(--muted);font-family:ui-monospace,Consolas,monospace;margin-top:2px}
+.ho-item .ho-item-h .topic{font-size:9px;color:var(--muted);margin-top:2px}
+.ho-item pre{
+  white-space:pre-wrap;word-break:break-word;font-size:10px;line-height:1.4;margin:0;
+  color:var(--ink);background:rgba(0,0,0,.35);border-radius:8px;padding:8px;border:1px solid var(--line);
+  max-height:120px;overflow:auto;user-select:text;-webkit-user-select:text
+}
+.ho-item .ho-item-actions{display:flex;justify-content:flex-end}
+.ho-modal .card .row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:12px;flex:none;flex-wrap:wrap}
+.ho-modal .card .row .left,.ho-modal .card .row .right{display:flex;gap:8px;align-items:center}
+.ho-modal .card button{
+  border:1px solid var(--line);background:rgba(0,0,0,.35);color:var(--ink);
+  font-size:11px;font-weight:800;padding:6px 12px;border-radius:8px;cursor:pointer
+}
+.ho-modal .card button:hover{border-color:rgba(94,234,212,.4);color:var(--cyan)}
+.ho-modal .card button.primary{background:rgba(251,191,36,.2);border-color:rgba(251,191,36,.45);color:#fcd34d}
+.ho-modal .card button.primary:hover{filter:brightness(1.1);color:#fde68a}
+.ho-modal .card button.ghost{opacity:.85}
+.ho-empty-list{font-size:11px;color:var(--muted);padding:24px 8px;text-align:center}
+.title{text-align:center}
+.title h1{font-size:15px;letter-spacing:.28em;font-weight:900}
+.title h1 b{color:var(--cyan)}
+.title .by{font-size:10px;color:var(--muted)}
+.view-toggle{
+  display:inline-flex;gap:4px;padding:3px;border-radius:999px;
+  background:rgba(0,0,0,.35);border:1px solid var(--line);margin-top:6px
+}
+.view-toggle button{
+  border:none;background:transparent;color:var(--muted);cursor:pointer;
+  font-size:10px;font-weight:800;letter-spacing:.05em;padding:6px 12px;border-radius:999px
+}
+.view-toggle button.on{background:#3b82f6;color:#fff;box-shadow:0 0 12px rgba(59,130,246,.35)}
+.view-toggle button:hover:not(.on){color:var(--ink)}
+/* Sync — top bar, shared by MAP / LIST / CLAW */
+.sync-bar{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;
+  margin-top:7px;padding:4px 10px;border-radius:999px;
+  background:rgba(0,0,0,.28);border:1px solid var(--line)
+}
+.sync-bar #btn-sync{
+  display:inline-flex;align-items:center;gap:5px;
+  border:1px solid rgba(94,234,212,.35);background:rgba(94,234,212,.1);
+  color:var(--cyan);cursor:pointer;font-size:10px;font-weight:900;
+  letter-spacing:.08em;padding:5px 12px;border-radius:999px
+}
+.sync-bar #btn-sync:hover{background:rgba(94,234,212,.18);border-color:rgba(94,234,212,.55)}
+.sync-bar #btn-sync:disabled{opacity:.65;cursor:wait}
+.sync-bar #btn-sync .ico{display:inline-block;font-size:12px;line-height:1}
+.sync-bar #btn-sync.spinning .ico{animation:syncspin .7s linear infinite}
+@keyframes syncspin{to{transform:rotate(360deg)}}
+.sync-meta{display:inline-flex;align-items:center;gap:8px;font-size:9px;font-weight:700;color:var(--muted)}
+.sync-meta .sync-last{font-family:ui-monospace,Consolas,monospace;color:var(--steel-hi,#c5d0de)}
+.sync-meta .sync-auto{
+  padding:2px 7px;border-radius:999px;background:rgba(163,230,53,.1);
+  border:1px solid rgba(163,230,53,.28);color:#bef264;letter-spacing:.06em;
+  cursor:pointer;font:inherit;font-size:9px;font-weight:800
+}
+.sync-meta .sync-auto.off{background:rgba(148,163,184,.1);border-color:rgba(148,163,184,.25);color:var(--muted)}
+.sync-meta .sync-auto:hover{filter:brightness(1.12)}
+.sync-bar[data-conn="off"] #btn-sync{
+  border-color:rgba(251,113,133,.55);background:rgba(251,113,133,.12);color:#fda4af
+}
+.sync-bar[data-conn="on"] #btn-sync{border-color:rgba(163,230,53,.4)}
+.needs{display:none;grid-column:1/-1;margin-top:6px;padding:8px 12px;border-radius:8px;
+  background:rgba(249,115,22,.12);border:1px solid rgba(249,115,22,.45);color:var(--amber);
+  font-size:12px;font-weight:700;cursor:pointer}
+.needs.show{display:block;animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.65}}
+
+/* LIST mode — dense rows (audit-board style) */
+.list-view{display:none;flex-direction:column;min-height:0;overflow:hidden;background:var(--bg)}
+.list-view.on{display:flex;padding:0}
+.list-sentinel{
+  flex:none;padding:10px 16px;margin:10px 16px 0;
+  background:linear-gradient(90deg,#3d2a08,#1a1408);
+  border:1px solid rgba(251,191,36,.35);color:var(--amber);font-size:12px;font-weight:700;
+  border-radius:10px
+}
+.list-sentinel .sub{font-size:11px;font-weight:500;color:#fcd34d;margin-top:4px;line-height:1.4}
+.list-scroll{flex:1;overflow:auto;padding:8px 0 24px}
+.list-section{border-bottom:1px solid var(--line)}
+.list-section-h{
+  display:flex;justify-content:space-between;align-items:center;padding:12px 16px;
+  background:rgba(255,255,255,.02);cursor:pointer;user-select:none
+}
+.list-section-h:hover{background:rgba(255,255,255,.04)}
+.list-section-h .lt{font-size:13px;font-weight:800;color:var(--ink)}
+.list-section-h .ls{font-size:11px;color:var(--muted);margin-top:2px}
+.list-section-h .prog{font-size:11px;color:var(--muted);font-family:ui-monospace,Consolas,monospace}
+.list-section.collapsed .list-rows{display:none}
+.list-row{
+  display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;
+  padding:10px 16px;border-top:1px solid rgba(255,255,255,.04)
+}
+.list-row:hover{background:rgba(255,255,255,.03)}
+.list-row .tags{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px}
+.list-row .tag{
+  font-size:9px;font-weight:800;padding:2px 6px;border-radius:4px;
+  background:rgba(59,130,246,.2);color:#93c5fd;letter-spacing:.04em
+}
+.list-row .tag.p0{background:rgba(251,113,133,.2);color:#fda4af}
+.list-row .tag.p1{background:rgba(251,191,36,.15);color:#fcd34d}
+.list-row .tag.done{background:rgba(163,230,53,.15);color:#bef264}
+.list-row .tag.run{background:rgba(94,234,212,.15);color:var(--cyan)}
+.list-row .title{font-size:12px;color:var(--ink);line-height:1.35}
+.list-row .btn{
+  border:1px solid var(--line);background:transparent;color:var(--muted);
+  font-size:11px;padding:5px 12px;border-radius:8px;cursor:pointer;white-space:nowrap
+}
+.list-row .btn:hover{color:var(--cyan);border-color:rgba(94,234,212,.4)}
+.board.list-mode .canvas-tools,.board.list-mode .canvas-hint,.board.list-mode .board-world{display:none}
+/* CLAW: pan/zoom world (same stage tools as MAP) — board-world stays hidden */
+.board.claw-mode .board-world{display:none}
+.board.list-mode .board-stage{cursor:default}
+.board.list-mode .claw-view,.board.map-mode .claw-view,.board.map-mode .list-view{display:none}
+.board.claw-mode .list-view{display:none}
+
+/* CLAW TREE — fleet hierarchy + running-leg claws (pan/zoom via .claw-world) */
+.claw-view{display:none;flex-direction:column;min-height:0;overflow:hidden;background:
+  radial-gradient(900px 500px at 50% 0%, rgba(40,50,70,.4), transparent 55%),#0a0c10}
+.claw-view.on{display:flex;position:absolute;inset:0;z-index:1;cursor:grab}
+.claw-view.on.panning{cursor:grabbing}
+/* Pan/zoom layer — same transform model as MAP board-world */
+.claw-world{
+  position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform;
+  padding:48px 40px 120px;min-width:min-content
+}
+.claw-stage{position:relative;min-width:min-content;margin:0 auto}
+.claw-head{
+  position:relative;width:var(--orch-w);margin:0 auto 0;text-align:center;z-index:3
+}
+.claw-head-card{
+  display:inline-flex;flex-direction:column;align-items:stretch;gap:6px;
+  width:var(--orch-w);padding:12px 14px 10px;border-radius:16px;border:1.5px solid rgba(251,146,60,.55);
+  background:linear-gradient(180deg,#1c1814,#12141a);box-shadow:0 0 28px rgba(251,146,60,.15);
+  text-align:center
+}
+.claw-head-card .ht{font-size:11px;font-weight:900;letter-spacing:.16em;color:#fdba74}
+.claw-head-card .hs{font-size:10px;color:var(--muted)}
+.claw-head-card .hb{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-top:2px}
+.claw-head-card .hb span{
+  font-size:9px;font-weight:800;padding:2px 7px;border-radius:999px;
+  background:rgba(251,146,60,.12);color:#fdba74;border:1px solid rgba(251,146,60,.25)
+}
+/* Mission Status is a band of the fleet head — not a free-floating modal */
+.claw-mission{
+  margin:4px 0 2px;padding:8px 10px;border-radius:10px;
+  border:1px solid rgba(94,234,212,.35);
+  background:linear-gradient(145deg,rgba(18,22,30,.96),rgba(10,12,16,.94));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05);text-align:left
+}
+.claw-mission .mf-h{
+  display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:3px
+}
+.claw-mission .mf-h .t{
+  font-size:8px;font-weight:900;letter-spacing:.1em;color:var(--cyan)
+}
+.claw-mission .mf-h .t i{display:inline-block;width:6px;height:6px;border-radius:50%;
+  background:var(--lime);margin-right:5px;box-shadow:0 0 6px var(--lime);vertical-align:middle}
+.claw-mission .mf-h .t i.bad{background:var(--rose);box-shadow:0 0 6px var(--rose)}
+.claw-mission .ms-row{font-size:9px;margin:1px 0;display:flex;justify-content:space-between;gap:6px;color:var(--muted)}
+.claw-mission .ms-row b{color:var(--ink);font-family:ui-monospace,Consolas,monospace;font-weight:700;font-size:9px}
+.claw-mission .ms-row b.ok{color:var(--lime)}.claw-mission .ms-row b.warn{color:var(--amber)}
+.claw-mission .ms-row b.bad{color:var(--rose)}.claw-mission .ms-row b.cyan{color:var(--cyan)}
+.claw-mission .ms-bar{height:3px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden;margin:2px 0 3px}
+.claw-mission .ms-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--lime),var(--cyan));border-radius:99px}
+.claw-mission .ms-foot{display:flex;justify-content:space-between;font-size:8px;
+  font-family:ui-monospace,Consolas,monospace;color:var(--muted);margin-top:2px}
+.claw-mission .ms-foot .t{color:var(--cyan)}
+/* head orchestrator: working = slow sway L-R-halt; stagnant = still (bad) */
+.claw-orch{
+  width:auto;min-width:40px;height:auto;min-height:40px;margin:8px auto 0;position:relative;
+  display:flex;flex-direction:column;align-items:center;justify-content:center
+}
+.claw-orch svg{width:52px;height:52px;display:block;overflow:visible;filter:drop-shadow(0 0 10px rgba(251,146,60,.5))}
+.claw-orch.working{animation:orch-sway 2.4s ease-in-out infinite}
+.claw-orch.stagnant{animation:none;filter:grayscale(.35);opacity:.8}
+.claw-orch.holding{animation:orch-sway 3.2s ease-in-out infinite}
+@keyframes orch-sway{
+  0%,100%{transform:translateX(0)}
+  20%{transform:translateX(-5px)}
+  35%{transform:translateX(-5px)} /* halt */
+  55%{transform:translateX(5px)}
+  70%{transform:translateX(5px)} /* halt */
+  85%{transform:translateX(0)}
+}
+.claw-note{
+  margin-top:6px;font-size:10px;color:#fdba74;background:rgba(249,115,22,.1);
+  border:1px solid rgba(249,115,22,.35);border-radius:8px;padding:4px 10px;display:inline-block
+}
+/* Vertical spine + SVG fan of node strings (head → each branch) */
+.claw-spine{
+  width:2px;height:20px;margin:0 auto;background:linear-gradient(180deg,#fb923c,rgba(251,146,60,.35));
+  position:relative;z-index:2
+}
+.claw-tree{
+  position:relative;display:flex;flex-direction:column;align-items:center
+}
+.claw-strings{
+  position:absolute;left:0;top:0;width:100%;height:100%;
+  pointer-events:none;z-index:1;overflow:visible
+}
+.claw-strings path{
+  fill:none;stroke:rgba(251,146,60,.75);stroke-width:2.2;
+  stroke-linecap:round;stroke-linejoin:round;
+  filter:drop-shadow(0 0 3px rgba(251,146,60,.3))
+}
+.claw-strings path.hold{stroke:rgba(251,191,36,.85)}
+.claw-strings path.stagnant{stroke:rgba(251,113,133,.75)}
+.claw-strings path.done{stroke:rgba(163,230,53,.65)}
+.claw-strings path.run{stroke:rgba(94,234,212,.8)}
+.claw-branches{
+  display:flex;gap:22px;align-items:flex-start;justify-content:center;padding:36px 16px 24px;
+  position:relative;z-index:2
+}
+.claw-branch{
+  width:220px;flex:none;display:flex;flex-direction:column;align-items:center;gap:0
+}
+/* short stub under string landing point */
+.claw-branch-line{
+  width:2px;height:10px;background:linear-gradient(180deg,rgba(251,146,60,.7),rgba(148,163,184,.25));
+  border-radius:1px
+}
+.claw-branch-card{
+  width:100%;border-radius:12px;border:1px solid var(--line);
+  background:linear-gradient(180deg,#141820,#0e1218);
+  box-shadow:0 8px 24px rgba(0,0,0,.35);overflow:hidden
+}
+.claw-branch-card .bh{
+  padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.06);
+  display:flex;justify-content:space-between;align-items:flex-start;gap:6px
+}
+.claw-branch-card .bh .bt{font-size:11px;font-weight:800;color:var(--ink);line-height:1.25}
+.claw-branch-card .bh .bm{font-size:9px;color:var(--muted);margin-top:2px}
+/* SA-N badge (sub-agent id always = Chat N) */
+.sa-id{color:var(--cyan);font-family:ui-monospace,Consolas,monospace;font-weight:900;letter-spacing:.04em}
+.claw-branch-card .badge{
+  font-size:8px;font-weight:900;letter-spacing:.04em;padding:2px 6px;border-radius:4px;flex:none
+}
+.claw-branch-card .badge.run{background:rgba(94,234,212,.15);color:var(--cyan)}
+.claw-branch-card .badge.hold{background:rgba(251,191,36,.15);color:var(--amber)}
+.claw-branch-card .badge.bad{background:rgba(251,113,133,.15);color:var(--rose)}
+.claw-branch-card .badge.ok{background:rgba(163,230,53,.12);color:var(--lime)}
+.claw-branch-card .bb{padding:8px 10px}
+.claw-branch-card .prog{
+  height:4px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden;margin-bottom:8px
+}
+.claw-branch-card .prog>i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),#3b82f6)}
+.claw-node{
+  display:flex;align-items:center;gap:8px;padding:6px 8px;margin-bottom:5px;
+  border-radius:8px;border:1px solid rgba(255,255,255,.06);background:rgba(0,0,0,.28);
+  font-size:10px;cursor:pointer
+}
+.claw-node:hover{border-color:rgba(94,234,212,.3)}
+.claw-node .nt{flex:1;min-width:0;line-height:1.3}
+.claw-node .nid{font-family:ui-monospace,Consolas,monospace;color:var(--cyan);font-weight:700;font-size:9px}
+.claw-node .nx{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.claw-node .ns{color:var(--muted);font-size:9px;margin-top:1px}
+.claw-node.done{border-color:rgba(163,230,53,.25)}
+.claw-node.run{border-color:rgba(94,234,212,.35)}
+.claw-node.hold{border-color:rgba(251,191,36,.4)}
+.claw-node.bad{border-color:rgba(251,113,133,.4)}
+.claw-hold-note{
+  font-size:9px;color:#fdba74;background:rgba(249,115,22,.1);border:1px solid rgba(249,115,22,.3);
+  border-radius:6px;padding:3px 6px;margin-top:3px
+}
+/* Pixel invader claw (ref: coral block alien) — legs march when working */
+.claw-icon{
+  width:28px;height:28px;flex:none;position:relative;
+  display:flex;align-items:center;justify-content:center;
+  image-rendering:pixelated;image-rendering:crisp-edges;
+  filter:drop-shadow(0 0 5px rgba(224,122,95,.45))
+}
+.claw-icon svg{width:28px;height:28px;display:block;overflow:visible;shape-rendering:crispEdges}
+.claw-icon .leg-l,.claw-icon .leg-r{transform-origin:50% 20%}
+.claw-icon.running .leg-l{animation:inv-leg-l .32s steps(2) infinite}
+.claw-icon.running .leg-r{animation:inv-leg-r .32s steps(2) infinite}
+.claw-icon.still{opacity:.72;filter:grayscale(.3) drop-shadow(0 0 2px rgba(224,122,95,.25))}
+@keyframes inv-leg-l{0%,100%{transform:translateY(0)}50%{transform:translateY(1px)}}
+@keyframes inv-leg-r{0%,100%{transform:translateY(1px)}50%{transform:translateY(0)}}
+.claw-node .claw-icon{margin-top:1px}
+.claw-orch{
+  image-rendering:pixelated;image-rendering:crisp-edges
+}
+.claw-orch svg{shape-rendering:crispEdges;display:block}
+.claw-orch.working .leg-l,.claw-orch.holding .leg-l{animation:inv-leg-l .36s steps(2) infinite}
+.claw-orch.working .leg-r,.claw-orch.holding .leg-r{animation:inv-leg-r .36s steps(2) infinite}
+.claw-fan{
+  position:absolute;left:50%;top:0;width:0;height:0;pointer-events:none;z-index:0
+}
+
+/* Main: left | canvas | right */
+.main{display:grid;grid-template-columns:var(--left) minmax(0,1fr) var(--right);
+  min-height:0;transition:grid-template-columns .2s ease}
+.main.L0{--left:0px}
+.main.R0{--right:0px}
+
+/* Rails */
+.rail{min-width:0;min-height:0;display:flex;flex-direction:column;
+  background:linear-gradient(180deg,#10141c,#0c0f14);overflow:hidden}
+.rail.left{border-right:1px solid var(--line)}
+.rail.right{border-left:1px solid var(--line)}
+.rail-head{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:10px 12px;border-bottom:1px solid var(--line);flex:none;background:rgba(0,0,0,.25)}
+.rail-head strong{font-size:11px;letter-spacing:.14em;color:var(--steel-hi,#c5d0de)}
+.rail-head .hide{
+  border:1px solid var(--line);background:rgba(0,0,0,.35);color:var(--ink);
+  font-size:11px;font-weight:800;padding:6px 10px;border-radius:8px;cursor:pointer
+}
+.rail-head .hide:hover{border-color:var(--cyan);color:var(--cyan)}
+.rail-body{flex:1;overflow:auto;padding:10px}
+
+/* Edge tabs when collapsed */
+.edge-tab{
+  position:fixed;top:50%;transform:translateY(-50%);z-index:60;
+  display:none;align-items:center;justify-content:center;
+  width:28px;min-height:72px;padding:10px 4px;
+  background:var(--brushed);border:1px solid var(--line);color:var(--cyan);
+  font-size:10px;font-weight:900;letter-spacing:.12em;cursor:pointer;
+  writing-mode:vertical-rl;box-shadow:0 6px 20px rgba(0,0,0,.45)
+}
+.edge-tab.show{display:flex}
+.edge-tab.L{left:0;border-radius:0 10px 10px 0}
+.edge-tab.R{right:0;border-radius:10px 0 0 10px}
+
+/* KPIs / history left */
+.kpi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:12px}
+.kpi{background:rgba(0,0,0,.3);border:1px solid var(--line);border-radius:10px;padding:8px;text-align:center}
+.kpi .n{font:800 16px ui-monospace,Consolas,monospace}
+.kpi .n.ok{color:var(--lime)}.kpi .n.hot{color:var(--orange)}.kpi .n.bad{color:var(--rose)}
+.kpi .l{font-size:8px;letter-spacing:.08em;color:var(--muted);margin-top:2px;font-weight:700}
+.h3{font-size:10px;letter-spacing:.12em;color:var(--muted);font-weight:800;margin:12px 0 6px}
+.bars{display:flex;align-items:flex-end;gap:3px;height:44px;padding:6px;background:rgba(0,0,0,.25);border-radius:8px;border:1px solid var(--line)}
+.bars i{flex:1;border-radius:3px 3px 0 0;background:linear-gradient(180deg,var(--cyan),rgba(94,234,212,.15));min-height:2px}
+.hist{font-size:10px;color:var(--muted);padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04);line-height:1.35}
+.hist time{color:var(--cyan);font-family:ui-monospace,Consolas,monospace;margin-right:6px}
+
+/* Canvas — board = mission header (in flow) + Pac stage below (no overlay) */
+.board{
+  position:relative;min-width:0;min-height:0;overflow:hidden;
+  display:flex;flex-direction:column;
+  background:
+    radial-gradient(900px 480px at 50% 10%, rgba(42,51,68,.55), transparent 58%),
+    linear-gradient(180deg, #0e1218 0%, var(--bg) 50%, #080a0e 100%)
+}
+/* Pac-Man surface: only this region pans/zooms */
+.board-stage{
+  position:relative;flex:1;min-height:0;min-width:0;overflow:hidden;cursor:grab;
+  -webkit-user-select:none;user-select:none
+}
+.board-stage.panning,.board-stage.panning *{cursor:grabbing;-webkit-user-select:none;user-select:none}
+.board-world{
+  position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform;
+  padding:40px 40px 100px;min-width:640px;z-index:1
+}
+.canvas-tools{position:absolute;top:10px;right:12px;z-index:10;display:flex;gap:4px}
+.canvas-tools button{
+  border:1px solid var(--line);background:rgba(0,0,0,.55);color:var(--muted);
+  font-size:11px;font-weight:800;padding:6px 10px;border-radius:8px;cursor:pointer
+}
+.canvas-tools button:hover{color:var(--cyan);border-color:rgba(94,234,212,.4)}
+.canvas-hint{position:absolute;left:12px;bottom:10px;z-index:10;font-size:9px;color:var(--muted);letter-spacing:.06em;opacity:.75;pointer-events:none}
+
+/*
+  Pac lanes: shape = vertical stack of wide horizontal tracks (ref screenshot)
+  theme = stainless Show Time (not pure arcade black/neon)
+*/
+/* Narrow arcade column — mission status + Pac track share this width */
+#lanes{
+  display:flex;flex-direction:column;gap:14px;
+  width:min(380px, 92vw); min-width:0
+}
+.lane{
+  width:100%;
+  padding:10px 12px 12px;
+  border-radius:14px;
+  border:1px solid var(--line);
+  background:var(--brushed);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.08),
+    0 10px 28px rgba(0,0,0,.35);
+  cursor:pointer;
+  font-family:"Segoe UI",system-ui,sans-serif
+}
+.lane:hover{
+  border-color:rgba(94,234,212,.28);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.1), 0 12px 32px rgba(0,0,0,.4)
+}
+.lane.qflash{
+  animation:pulse 1s infinite;
+  border-color:rgba(249,115,22,.5);
+  background:linear-gradient(145deg,#241a16,#2a3140 45%,#1a1412)
+}
+.lane-h{
+  display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+  margin-bottom:8px
+}
+.lane-h .name{
+  font-size:12px;font-weight:800;letter-spacing:.04em;
+  color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+}
+.lane-h .name .letter{
+  color:var(--cyan);margin-right:6px;font-family:ui-monospace,Consolas,monospace;
+  letter-spacing:.08em
+}
+.lane-h .name .dim{color:var(--muted);font-weight:600;font-size:11px}
+.lane-h .meta{
+  font-size:12px;font-weight:800;color:var(--amber);flex:none;
+  font-family:ui-monospace,Consolas,monospace;letter-spacing:.03em
+}
+.lane-h .meta.queued{color:var(--muted)}
+.lane-h .meta.clear{color:var(--cyan)}
+.lane-h .meta.stalled{color:var(--rose)}
+/* wide horizontal capsule track — sized like arcade ref, stainless fill */
+.track{
+  position:relative;height:52px;border-radius:26px;
+  border:2px solid rgba(94,234,212,.4);
+  background:linear-gradient(180deg, #0a0d12 0%, #121820 50%, #0a0c10 100%);
+  box-shadow:
+    inset 0 2px 10px rgba(0,0,0,.55),
+    inset 0 0 0 1px rgba(255,255,255,.04),
+    0 0 0 1px rgba(0,0,0,.3);
+  overflow:hidden
+}
+.track.needs_input{
+  border-color:rgba(249,115,22,.55);
+  box-shadow:inset 0 2px 8px rgba(0,0,0,.5), 0 0 16px rgba(249,115,22,.15)
+}
+.track.stalled{
+  border-color:rgba(251,113,133,.5);
+  box-shadow:inset 0 2px 8px rgba(0,0,0,.5), 0 0 14px rgba(251,113,133,.12)
+}
+.track.complete{
+  border-color:rgba(94,234,212,.55);
+  box-shadow:inset 0 2px 8px rgba(0,0,0,.5), 0 0 14px rgba(94,234,212,.12)
+}
+.track.queued{border-color:rgba(148,163,184,.3);opacity:.95}
+.pellet{
+  position:absolute;top:50%;width:9px;height:9px;margin-top:-4.5px;border-radius:50%;
+  background:var(--pellet);box-shadow:0 0 6px rgba(249,168,212,.45);opacity:.95
+}
+.pellet.eaten{opacity:.12;transform:scale(.4);background:var(--muted);box-shadow:none}
+.pellet.dim{background:rgba(148,163,184,.45);box-shadow:none;opacity:.5}
+.h-pac{
+  position:absolute;top:50%;width:28px;height:28px;margin-top:-14px;z-index:3;
+  transition:left .45s cubic-bezier(.2,.8,.2,1);
+  filter:drop-shadow(0 0 10px rgba(253,224,71,.55));
+  pointer-events:none
+}
+.h-pac svg{width:28px;height:28px;display:block}
+.h-pac .mouth{transform-origin:20px 20px;animation:pac-chomp .32s ease-in-out infinite alternate}
+@media (prefers-reduced-motion:reduce){
+  .h-pac .mouth{animation:none}
+}
+.ghost-sprite{
+  position:absolute;top:50%;width:26px;height:26px;margin-top:-13px;z-index:2;
+  filter:drop-shadow(0 0 6px currentColor);opacity:.92
+}
+.ghost-sprite svg{width:26px;height:26px;display:block}
+.lane-sub{
+  font-size:10px;color:var(--muted);margin:8px 0 0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  letter-spacing:.02em;font-family:ui-monospace,Consolas,monospace
+}
+.lane-q{
+  margin-top:8px;padding:6px 8px;border-radius:8px;
+  border:1px solid rgba(249,115,22,.4);background:rgba(249,115,22,.08);
+  font-size:10px;color:var(--orange);max-height:2.6em;overflow:hidden;
+  font-family:ui-monospace,Consolas,monospace
+}
+.empty{color:var(--muted);padding:60px 20px;text-align:center;width:min(560px,80vw)}
+.empty h2{letter-spacing:.14em;color:var(--cyan);margin-bottom:8px}
+.empty.offline h2{color:var(--rose)}
+/* Empty lives in world — never cover live lanes with a full-screen black slab */
+.board-world .empty{position:relative;z-index:1}
+.board-world .empty[style*="display: none"],
+.board-world .empty[hidden]{display:none!important}
+
+/* MISSION STATUS — MAP: sits on top of each Pac lane (same width). LIST/CLAW: top bar, same width. */
+.mission-bar{
+  flex:none;
+  display:flex;
+  justify-content:center;
+  align-items:stretch;
+  gap:10px;
+  padding:8px 12px;
+  border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg, rgba(16,20,28,.98), rgba(12,14,18,.95));
+  z-index:5
+}
+.mission-bar[hidden]{display:none!important}
+/* Shared card shell — always matches Pac column width (narrow) */
+.mission-float{
+  display:flex;align-items:stretch;gap:0;
+  width:min(380px, 92vw);
+  max-width:100%;
+  border-radius:10px;border:1px solid rgba(94,234,212,.35);
+  background:linear-gradient(145deg,rgba(18,22,30,.96),rgba(10,12,16,.94));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06)
+}
+/* Per-lane: full width of the Pac card, attached above the track */
+.lane > .mission-float.lane-mission{
+  width:100%;
+  max-width:none;
+  margin:0 0 10px;
+  flex:none
+}
+.lane > .mission-float.lane-mission[hidden]{display:none!important}
+.mission-float[hidden]{display:none!important}
+.mission-float .mf-icon{
+  flex:none;width:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:2px;padding:6px 4px;border-right:1px solid var(--line);
+  background:radial-gradient(circle at 50% 40%,rgba(253,224,71,.14),transparent 70%)
+}
+.mission-float .mf-icon .glyph{width:28px;height:28px;display:block}
+.mission-float .mf-icon .glyph svg{width:28px;height:28px;display:block;filter:drop-shadow(0 0 6px rgba(253,224,71,.45))}
+.mission-float .mf-icon .glyph.pac .mouth{
+  transform-origin:20px 20px;
+  animation:pac-chomp .35s ease-in-out infinite alternate
+}
+@keyframes pac-chomp{
+  from{transform:rotate(0deg)}
+  to{transform:rotate(-28deg)}
+}
+@media (prefers-reduced-motion:reduce){
+  .mission-float .mf-icon .glyph.pac .mouth{animation:none}
+}
+.mission-float .mf-icon .tag{
+  font-size:7px;font-weight:900;letter-spacing:.1em;color:var(--muted);text-align:center
+}
+.mission-float .mf-body{flex:1;min-width:0;padding:5px 8px 6px}
+.mission-float .mf-h{
+  display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:2px
+}
+.mission-float .mf-h .t{
+  font-size:8px;font-weight:900;letter-spacing:.08em;color:var(--cyan);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0
+}
+.mission-float .mf-h .t i{display:inline-block;width:6px;height:6px;border-radius:50%;
+  background:var(--lime);margin-right:5px;box-shadow:0 0 6px var(--lime);vertical-align:middle}
+.mission-float .mf-h .t i.bad{background:var(--rose);box-shadow:0 0 6px var(--rose)}
+.mission-float .mf-h .x{
+  border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:13px;padding:0 4px;flex:none
+}
+.mission-float .mf-h .x:hover{color:var(--ink)}
+.mission-float .ms-row{font-size:9px;margin:1px 0;display:flex;justify-content:space-between;gap:6px;color:var(--muted)}
+.mission-float .ms-row b{color:var(--ink);font-family:ui-monospace,Consolas,monospace;font-weight:700;font-size:9px}
+.mission-float .ms-bar{height:3px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden;margin:2px 0 3px}
+.mission-float .ms-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--lime),var(--cyan));border-radius:99px}
+.mission-float .ms-foot{display:flex;justify-content:space-between;font-size:8px;
+  font-family:ui-monospace,Consolas,monospace;color:var(--muted);margin-top:2px}
+.mission-float .ms-row b.ok{color:var(--lime)}.mission-float .ms-row b.warn{color:var(--amber)}
+.mission-float .ms-row b.bad{color:var(--rose)}.mission-float .ms-row b.cyan{color:var(--cyan)}
+/* LIST / CLAW fill the Pac stage under the mission bar */
+.list-view{
+  position:absolute;inset:0;z-index:1;overflow:hidden
+}
+/* claw-view position/overflow set above (pan world) */
+
+/* Right ops — dense detail (mission / in-flight / sentinel / bookmarks) */
+.tabs{display:flex;gap:4px;padding:8px;border-bottom:1px solid var(--line);overflow-x:auto;flex:none}
+.tabs button{border:1px solid var(--line);background:rgba(0,0,0,.25);color:var(--muted);
+  font-size:10px;font-weight:800;padding:6px 10px;border-radius:8px;cursor:pointer;flex:none}
+.tabs button.on{color:var(--cyan);border-color:rgba(94,234,212,.4)}
+.panel{margin-bottom:10px;border-radius:10px;border:1px solid var(--line);background:rgba(0,0,0,.22);overflow:hidden}
+.panel h4{
+  font-size:10px;letter-spacing:.1em;padding:8px 10px;color:var(--muted);
+  border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer;user-select:none;
+  display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:800
+}
+.panel h4:hover{color:var(--ink)}
+.panel h4 .chev{color:var(--muted);font-size:11px}
+.panel.collapsed .body{display:none}
+.panel.collapsed h4{border-bottom:none}
+.panel .body{padding:8px 10px;font-size:11px;line-height:1.45}
+.ok{color:var(--lime)}.bad{color:var(--rose)}.warn{color:var(--amber)}
+.ms-row{display:flex;justify-content:space-between;gap:8px;margin:5px 0;color:var(--muted);font-size:12px}
+.ms-row b{color:var(--ink);font-family:ui-monospace,Consolas,monospace;font-weight:700}
+.ms-row b.ok{color:var(--lime)}.ms-row b.warn{color:var(--amber)}.ms-row b.bad{color:var(--rose)}.ms-row b.cyan{color:var(--cyan)}
+.ms-bar{height:7px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden;margin:8px 0 6px}
+.ms-bar>i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--lime),var(--cyan))}
+.ms-foot{display:flex;justify-content:space-between;font-size:11px;font-family:ui-monospace,Consolas,monospace;margin-top:6px;color:var(--muted)}
+.ms-foot .t{color:var(--cyan)}
+.inflight-item{padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.inflight-item:last-child{border-bottom:none}
+.inflight-item .id{color:var(--amber);font-family:ui-monospace,Consolas,monospace;font-weight:800;font-size:11px}
+.inflight-item .tx{color:var(--ink);font-size:11px;margin-top:2px;line-height:1.35}
+.inflight-item .st{font-size:10px;color:var(--muted);margin-top:3px}
+.live-ok{color:var(--lime);font-weight:700;font-size:12px;padding:6px 0}
+.live-bad{color:var(--rose);font-weight:700;font-size:12px;padding:6px 0}
+.sent-block{font-size:10px;color:var(--muted);line-height:1.45;margin-bottom:10px;padding-bottom:10px;
+  border-bottom:1px solid rgba(255,255,255,.04);word-break:break-word}
+.sent-block:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
+.sent-block time{color:var(--cyan);font-family:ui-monospace,Consolas,monospace;margin-right:6px;font-weight:700}
+.bm-item{
+  display:block;padding:8px 10px;margin-bottom:6px;border-radius:8px;
+  background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.06);
+  border-left:3px solid var(--cyan);font-size:11px;line-height:1.35
+}
+.bm-item .bid{font-family:ui-monospace,Consolas,monospace;font-weight:800;color:var(--cyan);font-size:10px;margin-bottom:2px}
+.bm-item.c0{border-left-color:#a78bfa}.bm-item.c1{border-left-color:#67e8f9}
+.bm-item.c2{border-left-color:#fbbf24}.bm-item.c3{border-left-color:#fb7185}
+.bm-item.c4{border-left-color:#a3e635}
+.todo{display:flex;gap:6px;padding:3px 0;font-size:11px}
+.todo .mk{width:11px;height:11px;border:1.5px solid #3d4a5c;border-radius:3px;margin-top:2px;flex:none}
+.todo.done .mk{background:var(--lime);border-color:var(--lime)}
+.field textarea{width:100%;min-height:48px;background:rgba(0,0,0,.35);border:1px solid var(--line);
+  border-radius:8px;color:var(--ink);padding:8px;font:inherit;font-size:11px}
+.field .row{display:flex;gap:6px;margin-top:6px}
+.field button{border:none;border-radius:8px;padding:7px 12px;font-weight:800;font-size:11px;cursor:pointer;background:var(--amber);color:#111}
+.field button.ghost{background:transparent;border:1px solid var(--line);color:var(--muted)}
+.sg{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.sg div{background:rgba(0,0,0,.25);border-radius:8px;padding:6px}
+.sg .k{font-size:9px;color:var(--muted)}.sg .v{font:800 13px ui-monospace,Consolas,monospace}
+
+/* Bottom dock */
+.dock{display:flex;flex-direction:column;flex:none;z-index:30;
+  background:var(--brushed);border-top:1px solid var(--line);box-shadow:0 -8px 28px rgba(0,0,0,.4);
+  height:240px;max-height:75vh;min-height:44px}
+.dock.closed .dock-chats{display:none}
+.dock-resizer{height:12px;cursor:ns-resize;display:flex;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.25);flex:none;user-select:none}
+.dock-resizer:hover{background:rgba(94,234,212,.12)}
+.dock-resizer i{width:48px;height:4px;border-radius:99px;background:rgba(197,208,222,.4)}
+.brand{display:flex;align-items:center;justify-content:center;gap:10px;padding:6px 12px;min-height:40px;flex:none}
+.brand img{width:24px;height:24px;border-radius:6px;animation:spin 10s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.brand .word{font-size:12px;font-weight:900;letter-spacing:.26em}
+.brand .word b{color:var(--cyan)}
+.brand .sub{font-size:10px;letter-spacing:.12em;color:var(--muted);font-weight:700}
+.brand .btn{
+  margin-left:8px;border:1px solid var(--line);background:rgba(0,0,0,.35);color:var(--ink);
+  font-size:10px;font-weight:800;padding:5px 10px;border-radius:8px;cursor:pointer
+}
+.brand .btn:hover{color:var(--cyan);border-color:rgba(94,234,212,.4)}
+/* ORCH desk: never full-bleed — max width = fleet orchestrator card (--orch-w) */
+.dock-chats{
+  flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;
+  align-items:center;justify-content:flex-start;
+  border-top:1px solid rgba(249,115,22,.35);
+  background:linear-gradient(180deg,#12161e,#0a0c10)
+}
+.ledges{
+  flex:1;min-height:0;width:100%;max-width:var(--orch-w);
+  display:flex;flex-direction:column;gap:10px;
+  padding:10px 0 12px;box-sizing:border-box;overflow-x:hidden;overflow-y:auto
+}
+.ledge{
+  display:flex;flex-direction:column;flex:0 0 auto;
+  width:100%;max-width:var(--orch-w);
+  min-height:120px;max-height:min(220px, 42%);
+  overflow:hidden;border-radius:10px;
+  border:1px solid var(--line);background:rgba(0,0,0,.3)
+}
+.ledge.qflash{animation:pulse 1s infinite;border-color:rgba(249,115,22,.5)}
+.ledge-h{display:flex;justify-content:space-between;align-items:flex-start;gap:6px;padding:6px 8px;
+  border-bottom:1px solid rgba(255,255,255,.05);background:rgba(0,0,0,.25)}
+.ledge-h .t{font-size:10px;font-weight:800;letter-spacing:.04em;line-height:1.25;min-width:0}
+.ledge-h .t .orch-tag{color:#fdba74;font-size:8px;letter-spacing:.1em;display:block;margin-bottom:1px}
+.ledge-h .t .sa-line{color:var(--ink)}
+.ledge-h .t .topic{color:var(--muted);font-weight:600;font-size:9px;margin-top:1px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ledge-h .t2{flex:none;display:flex;gap:2px}
+.ledge-h .t2 button{border:none;background:transparent;color:var(--muted);font-size:9px;font-weight:800;cursor:pointer;padding:3px 6px;border-radius:4px}
+.ledge-h .t2 button.on{color:var(--orange);background:rgba(249,115,22,.12)}
+.ledge-body{flex:1;overflow:auto;padding:6px 8px;font-size:10px}
+.qcard{background:rgba(0,0,0,.3);border:1px solid var(--line);border-radius:8px;padding:6px;margin-bottom:6px}
+.qcard.open{border-color:rgba(249,115,22,.4)}
+.qcard .orch-from{font-size:8px;font-weight:900;letter-spacing:.08em;color:#fdba74;margin-bottom:3px}
+.qcard .orch-topic{font-size:9px;color:var(--muted);margin-bottom:4px}
+.qcard .orch-q{color:var(--ink);line-height:1.35}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0}
+.chips button{border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--muted);font-size:9px;padding:3px 6px;border-radius:99px;cursor:pointer}
+.compose{display:flex;gap:4px;margin-top:4px}
+.compose input{flex:1;background:rgba(0,0,0,.35);border:1px solid var(--line);border-radius:6px;color:var(--ink);font-size:10px;padding:5px 8px}
+.compose button{background:var(--amber);border:none;border-radius:6px;color:#111;font-weight:800;font-size:10px;padding:5px 10px;cursor:pointer}
+.dock-sub{font-size:9px;color:var(--muted);font-weight:700;letter-spacing:.04em;margin-left:6px}
+.dock-sub b{color:#fdba74;font-weight:800}
+
+.toast{position:fixed;top:12px;right:12px;z-index:100;display:none;max-width:300px;padding:12px;
+  background:var(--brushed);border:1px solid var(--line);border-radius:10px}
+.toast.show{display:block}
+@media (prefers-reduced-motion:reduce){.brand img,.lane.qflash,.ledge.qflash,.needs{animation:none}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="ho-rail" id="ho-rail">
+      <button type="button" class="ho-folder-btn" id="ho-folder-btn" title="Open all handover notes">
+        <span class="ico" aria-hidden="true">📁</span>
+        <span class="meta">
+          <div class="lab">HANDOVERS</div>
+          <div class="cnt" id="ho-folder-cnt">0 notes</div>
+          <div class="hint">Click to open</div>
+        </span>
+        <span class="badge" id="ho-folder-badge">0</span>
+      </button>
+    </div>
+    <div class="title">
+      <h1><b>SHOW</b>TIME</h1>
+      <div class="by">1950s board · <strong>Looplet</strong> · click arm link anytime</div>
+      <div class="view-toggle" role="tablist" aria-label="Board view">
+        <button type="button" id="btn-list" role="tab" aria-selected="false">📋 LIST</button>
+        <button type="button" id="btn-map" class="on" role="tab" aria-selected="true">ᗧ MAP</button>
+        <button type="button" id="btn-claw" role="tab" aria-selected="false">🦞 CLAW</button>
+      </div>
+      <div class="sync-bar" id="sync-bar" title="Connection · busts browser cache (MAP · LIST · CLAW)">
+        <button type="button" id="btn-sync" aria-label="Force connection and clear browser cache">
+          <span class="ico" aria-hidden="true">⟳</span>
+          <span>SYNC</span>
+        </button>
+        <span class="sync-meta">
+          <span class="sync-last" id="sync-last">Last connected: —</span>
+          <button type="button" class="sync-auto" id="sync-auto" title="Auto reconnect poll">AUTO 2s</button>
+        </span>
+      </div>
+    </div>
+    <div class="score r">
+      <div class="lab">1UP / HIGH</div>
+      <div class="val"><span id="score-1up">0</span> · <span id="score-hi">0</span></div>
+    </div>
+    <div class="needs" id="needs"></div>
+  </header>
+  <div class="ho-modal" id="ho-modal" role="dialog" aria-modal="true" aria-label="Handover notes">
+    <div class="card">
+      <h3 id="ho-modal-title">📁 HANDOVER FOLDER</h3>
+      <div class="sub" id="ho-modal-sub">ORCH notes · SA-N · Chat · time</div>
+      <div class="ho-list" id="ho-modal-list"></div>
+      <div class="row">
+        <div class="left">
+          <button type="button" class="primary" id="ho-copy-all" title="Copy every note to clipboard">Copy all</button>
+        </div>
+        <div class="right">
+          <button type="button" class="ghost" id="ho-modal-close">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="main" id="main">
+    <aside class="rail left" id="left">
+      <div class="rail-head">
+        <strong>STATS · HISTORY</strong>
+        <button type="button" class="hide" id="hide-left">Hide</button>
+      </div>
+      <div class="rail-body">
+        <div class="kpi-grid" id="kpis"></div>
+        <div class="h3">CHARTS</div>
+        <div class="bars" id="chart-done"></div>
+        <div class="h3">HISTORY</div>
+        <div id="history"></div>
+      </div>
+    </aside>
+
+    <section class="board" id="board">
+      <!-- Fleet mission bar: LIST/CLAW (and empty MAP). MAP with sessions uses per-lane cards on each Pac. -->
+      <div class="mission-bar" id="mission-sticky">
+        <div class="mission-float" id="mission-float" hidden>
+          <div class="mf-icon" id="mf-icon"></div>
+          <div class="mf-body">
+            <div class="mf-h">
+              <div class="t" id="mf-title"><i id="mf-dot"></i>MISSION STATUS</div>
+              <button type="button" class="x" id="mf-close" title="Hide (reopens on next sync)">×</button>
+            </div>
+            <div id="mf-rows"></div>
+          </div>
+        </div>
+      </div>
+      <!-- Pac-Man / LIST / CLAW stage only — pan & zoom live here -->
+      <div class="board-stage" id="board-stage">
+        <div class="canvas-tools">
+          <button type="button" id="z-out">−</button>
+          <button type="button" id="z-fit">Fit</button>
+          <button type="button" id="z-reset">Reset</button>
+          <button type="button" id="z-in">+</button>
+        </div>
+        <div class="canvas-hint">Drag canvas to pan · scroll to zoom · Fit frames all chats</div>
+        <div class="board-world" id="world">
+          <div id="lanes"></div>
+          <div class="empty" id="empty">
+            <h2>SHOWTIME</h2>
+            <p>Waiting for sessions… Arm autopro — the TV card lives in chat, not here.</p>
+          </div>
+        </div>
+        <div class="list-view" id="list-view">
+          <div class="list-sentinel" id="list-sentinel"></div>
+          <div class="list-scroll" id="list-scroll"></div>
+        </div>
+        <div class="claw-view" id="claw-view">
+          <div class="claw-world" id="claw-world">
+            <div class="claw-stage" id="claw-stage"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="rail right" id="right">
+      <div class="rail-head">
+        <strong>OPS</strong>
+        <button type="button" class="hide" id="hide-right">Hide</button>
+      </div>
+      <div class="tabs" id="tabs"></div>
+      <div class="rail-body" id="ops"></div>
+    </aside>
+  </div>
+
+  <footer class="dock" id="dock">
+    <div class="dock-resizer" id="dock-resizer" title="Drag up to resize"><i></i></div>
+    <div class="brand">
+      <img src="/assets/looplet-logo.png" alt="Looplet" width="24" height="24" />
+      <span class="word"><b>LOOP</b>LET</span>
+      <span class="sub">SHOW TIME</span>
+      <span class="dock-sub" id="dock-sub"><b>ORCH desk</b> — questions on behalf of sub-agents</span>
+      <button type="button" class="btn" id="dock-toggle">Hide ORCH desk</button>
+    </div>
+    <div class="dock-chats" id="dock-chats">
+      <div class="ledges" id="ledges"></div>
+    </div>
+  </footer>
+</div>
+
+<button type="button" class="edge-tab L" id="tab-left">STATS</button>
+<button type="button" class="edge-tab R" id="tab-right">OPS</button>
+<div class="toast" id="toast"><b id="th"></b><div id="tp"></div></div>
+
+<script>
+// Auth shim: theater-server injects window.__SHOWTIME_TOKEN__ when serving
+// this page; every same-origin /api/ request must present it.
+(function(){
+  const tok = () => window.__SHOWTIME_TOKEN__ || ''
+  const _fetch = window.fetch.bind(window)
+  window.fetch = (u, o = {}) => {
+    if (typeof u === 'string' && u.startsWith('/api/')) {
+      o.headers = Object.assign({}, o.headers || {}, { 'X-Showtime-Token': tok() })
+    }
+    return _fetch(u, o)
+  }
+  window.__showtimeApiUrl = (u) => u + (u.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(tok())
+})()
+const GHOST=['#ff6b6b','#67e8f9','#c084fc','#fdba74']
+const SYNC_MS = 2000 // auto connection poll (MAP · LIST · CLAW)
+let sessions=[], selectedId=null, ledgeTab={}
+let handovers=[] // operator notes (single folder → modal list)
+let hoModalOpen=false
+let viewMode = localStorage.getItem('st-view') || 'map' // map | list | claw
+let listCollapsed = JSON.parse(localStorage.getItem('st-list-sec')||'{}')
+let leftOpen = localStorage.getItem('st-left') !== '0'
+let rightOpen = localStorage.getItem('st-right') !== '0'
+let dockOpen = localStorage.getItem('st-dock') !== '0'
+let dockH = Math.max(140, parseInt(localStorage.getItem('st-dock-h')||'260',10))
+let scale = parseFloat(localStorage.getItem('st-scale')||'0.85')
+let panX = parseFloat(localStorage.getItem('st-pan-x')||'40')
+let panY = parseFloat(localStorage.getItem('st-pan-y')||'40')
+let lastSyncedAt = null
+let lastSyncSource = ''
+let syncing = false
+let connOk = null // null unknown · true live · false offline
+let autoSync = localStorage.getItem('st-auto-sync') !== '0'
+let autoSyncTimer = null
+let liveEs = null // EventSource — reopened by SYNC to beat stale sockets / cache
+// Always show mission float on top of Pac / LIST / CLAW (user can × for this tab only)
+let missionFloatOpen = true
+let mapFittedOnce = false
+let clawFittedOnce = false
+let missionTickTimer = null
+let lastViewMode = viewMode
+
+const $ = id => document.getElementById(id)
+const esc = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+function toast(h,p){$('th').textContent=h;$('tp').textContent=p;$('toast').classList.add('show');setTimeout(()=>$('toast').classList.remove('show'),3500)}
+function oq(s){return (s.questions||[]).filter(q=>q.status==='open')}
+function ghostSvg(c){return `<svg viewBox="0 0 16 16" style="color:${c}"><path fill="currentColor" d="M1 7a7 7 0 0 1 14 0v7l-2.3-1.5L10 14l-2-1.5L6 14l-2.3-1.5L1 14V7z"/><circle cx="5.5" cy="7" r="1.2" fill="#111"/><circle cx="10.5" cy="7" r="1.2" fill="#111"/></svg>`}
+
+function applyChrome(){
+  const main=$('main'), dock=$('dock')
+  main.classList.toggle('L0', !leftOpen)
+  main.classList.toggle('R0', !rightOpen)
+  $('tab-left').classList.toggle('show', !leftOpen)
+  $('tab-right').classList.toggle('show', !rightOpen)
+  dock.classList.toggle('closed', !dockOpen)
+  if(dockOpen){
+    dock.style.height = dockH + 'px'
+    $('dock-toggle').textContent = 'Hide ORCH desk'
+  } else {
+    dock.style.height = '52px'
+    $('dock-toggle').textContent = 'Show ORCH desk'
+  }
+  localStorage.setItem('st-left', leftOpen?'1':'0')
+  localStorage.setItem('st-right', rightOpen?'1':'0')
+  localStorage.setItem('st-dock', dockOpen?'1':'0')
+  localStorage.setItem('st-dock-h', String(dockH))
+}
+
+function applyCanvas(){
+  scale = Math.max(0.2, Math.min(2, scale))
+  const tf = `translate3d(${panX}px, ${panY}px, 0) scale(${scale})`
+  const world = $('world')
+  if(world) world.style.transform = tf
+  const clawWorld = $('claw-world')
+  if(clawWorld) clawWorld.style.transform = tf
+  localStorage.setItem('st-scale', String(scale))
+  localStorage.setItem('st-pan-x', String(panX))
+  localStorage.setItem('st-pan-y', String(panY))
+  // grid moves on Pac stage only (mission header is outside)
+  const stage = $('board-stage') || $('board')
+  stage.style.backgroundPosition = `${panX}px ${panY}px`
+  $('z-reset').textContent = Math.round(scale*100) + '%'
+}
+
+function fitAll(){
+  const stage=$('board-stage') || $('board')
+  if(!sessions.length){ scale=0.85; panX=40; panY=40; applyCanvas(); return }
+  const br=stage.getBoundingClientRect()
+  const pad=64
+  // Fit MAP lanes or CLAW fleet tree depending on active view
+  if(viewMode==='claw'){
+    const cw=$('claw-world'), stg=$('claw-stage')
+    if(!cw||!stg){ applyCanvas(); return }
+    cw.style.transform='translate3d(0,0,0) scale(1)'
+    const w = Math.max(stg.offsetWidth, 1)
+    // Fit WIDTH for readable claws — do NOT crush to full tree height (was ~35% and unreadable)
+    const sx=(br.width-pad)/w
+    scale=Math.max(0.5, Math.min(0.92, sx))
+    panX = Math.max(12, (br.width - w*scale)/2)
+    panY = 28
+    applyCanvas()
+    requestAnimationFrame(()=>drawClawStrings())
+    return
+  }
+  const lanes=$('lanes')
+  const prev=$('world').style.transform
+  $('world').style.transform='translate3d(0,0,0) scale(1)'
+  const lr=lanes.getBoundingClientRect()
+  const sx=(br.width-pad)/Math.max(lr.width,1)
+  const sy=(br.height-pad)/Math.max(lr.height,1)
+  scale=Math.max(0.2, Math.min(1.2, Math.min(sx,sy)))
+  panX=(br.width - lr.width*scale)/2
+  panY=Math.max(24, (br.height - lr.height*scale)/3)
+  $('world').style.transform=prev
+  applyCanvas()
+}
+
+function kpis(list){
+  let done=0,total=0,inflight=0,needs=0,bm=0,p0=0
+  for(const s of list){
+    const c=s.counts||{}, todos=s.todo||[]
+    done += c.done||todos.filter(t=>t.state==='done').length
+    const t = todos.length || ((c.pending||0)+(c.inProgress||0)+(c.done||0)+(c.blocked||0))
+    total += t
+    inflight += c.inProgress||todos.filter(t=>t.state==='in-progress').length
+    needs += oq(s).length + (c.blocked||0) + (s.needsInput?1:0)
+    bm += (s.bookmarks&&s.bookmarks.length) || todos.filter(t=>t.state!=='done').length
+    p0 += todos.filter(t=>t.state!=='done'&&(/P0/i.test(t.id||'')||/P0/i.test(t.text||''))).length
+  }
+  return {done,total,inflight,needs,bm,p0}
+}
+
+function renderLeft(){
+  const scope = selectedId ? sessions.filter(s=>s.sessionId===selectedId) : sessions
+  const k = kpis(scope.length?scope:sessions)
+  $('kpis').innerHTML = `
+    <div class="kpi"><div class="n ok">${k.done}</div><div class="l">Done</div></div>
+    <div class="kpi"><div class="n">${k.total}</div><div class="l">Total</div></div>
+    <div class="kpi"><div class="n">${k.inflight}</div><div class="l">In flight</div></div>
+    <div class="kpi"><div class="n hot">${k.needs}</div><div class="l">Needs you</div></div>
+    <div class="kpi"><div class="n">${k.bm}</div><div class="l">Bookmarks</div></div>
+    <div class="kpi"><div class="n bad">${k.p0}</div><div class="l">P0 open</div></div>`
+  const maxD=Math.max(1,...sessions.map(s=>(s.counts?.done||0)+1))
+  $('chart-done').innerHTML = sessions.map(s=>{
+    const h=Math.max(3, Math.round(((s.counts?.done||0)/maxD)*44))
+    return `<i style="height:${h}px" title="${agentRef(s)}"></i>`
+  }).join('') || '<i style="height:3px"></i>'
+  const hist=[]
+  for(const s of sessions) for(const e of (s.sentinel||[]).slice(0,6))
+    hist.push({at:e.at, text:`${saBadge(s)}: ${e.text}`})
+  hist.sort((a,b)=>(b.at||'').localeCompare(a.at||''))
+  $('history').innerHTML = hist.slice(0,24).map(e=>
+    `<div class="hist"><time>${esc((e.at||'').slice(11,16)||'—')}</time>${esc(e.text)}</div>`
+  ).join('') || '<div class="hist">No history yet.</div>'
+}
+
+function setCols(){
+  const n=Math.max(1, sessions.length)
+  document.documentElement.style.setProperty('--cols', n)
+  // Dock ledges: single column capped to ORCH head width (never full screen)
+  const el=$('ledges')
+  if(el){
+    el.style.gridTemplateColumns = ''
+    el.style.maxWidth = '' // CSS --orch-w owns the cap
+  }
+}
+
+function laneLetter(n){
+  // A, B, C… like the reference board
+  return String.fromCharCode(64 + Math.min(26, Math.max(1, n||1)))
+}
+
+/** Sub-agent number always matches Chat / lane number (SA-1 ≡ Chat 1). */
+function subAgentNo(s){
+  if(!s) return 0
+  return Number(s.subAgentNo || s.lane) || 0
+}
+function subAgentId(s){
+  if(!s) return 'SA-?'
+  return s.subAgentId || (subAgentNo(s) ? `SA-${subAgentNo(s)}` : 'SA-?')
+}
+/** Operator-facing ref: "SA-2 · Chat 2" */
+function agentRef(s){
+  if(!s) return '—'
+  const n = subAgentNo(s)
+  return n ? `SA-${n} · Chat ${n}` : (s.chatLabel || s.sessionId || 'agent')
+}
+/** Short badge for tight UI */
+function saBadge(s){
+  return subAgentId(s)
+}
+
+function missionTotals(list){
+  const scope = list && list.length ? list : sessions
+  let done=0, total=0, remaining=0, blocked=0, workers=0, completed=0
+  for(const s of scope){
+    const todos=s.todo||[]
+    const c=s.counts||{}
+    const d=c.done||todos.filter(t=>t.state==='done').length
+    const t=todos.length||((c.pending||0)+(c.inProgress||0)+(c.done||0)+(c.blocked||0))||0
+    done += d
+    total += t
+    remaining += (c.pending||0)+(c.inProgress||0) || todos.filter(x=>x.state==='pending'||x.state==='in-progress').length
+    blocked += (c.blocked||0)+oq(s).length+(s.needsInput?1:0)
+    if(['running','in-progress','queued'].includes(s.status) || (c.inProgress||0)>0) workers++
+    if(s.status==='complete' || (t>0 && d>=t)) completed++
+  }
+  const pct = total ? Math.round((done/total)*100) : 0
+  return {done,total,remaining,blocked,workers,completed,pct,n:scope.length}
+}
+
+/** Classic Pac-Man SVG — yellow body, open mouth (right), black eye */
+function pacManSvg(size=32){
+  return `<svg viewBox="0 0 40 40" width="${size}" height="${size}" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <g class="mouth">
+      <path fill="#fde047" stroke="#facc15" stroke-width="0.4"
+        d="M20 20 L35 8.5 A17 17 0 1 0 35 31.5 Z"/>
+    </g>
+    <circle cx="22" cy="12" r="2.4" fill="#111827"/>
+  </svg>`
+}
+function pacGlyphHtml(){
+  return `<div class="glyph pac" aria-hidden="true">${pacManSvg(32)}</div><div class="tag">PAC</div>`
+}
+function pacSpriteHtml(leftPct){
+  return `<div class="h-pac" style="left:calc(${leftPct}% - 14px)">${pacManSvg(28)}</div>`
+}
+function clawGlyphHtml(){
+  return `<div class="glyph claw" aria-hidden="true">${invaderPixelSvg(2.5)}</div><div class="tag">CLAW</div>`
+}
+
+function sessionMissionStats(s){
+  return missionTotals(s ? [s] : [])
+}
+
+function missionAgeText(){
+  const age = lastSyncedAt ? Math.max(0, Math.round((Date.now()-lastSyncedAt.getTime())/1000)) : null
+  return age==null ? 'waiting…' : (age<2 ? 'just now' : `updated ${age}s ago`)
+}
+
+function missionClockText(){
+  return new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})
+}
+
+/** Compact MISSION STATUS card HTML — per Pac lane (same width as track). */
+function laneMissionHtml(s){
+  if(!missionFloatOpen) return ''
+  const m = sessionMissionStats(s)
+  const letter = laneLetter(s.lane)
+  const bad = connOk===false || m.blocked>0
+  const st = s.status || 'running'
+  const who = `${saBadge(s)} · Chat ${subAgentNo(s)} · ${esc(s.repoId||'chat')}`
+  const clock = missionClockText()
+  const ageTxt = missionAgeText()
+  return `<div class="mission-float lane-mission" data-lane-mission="${esc(s.sessionId||'')}">
+    <div class="mf-icon">${pacGlyphHtml()}</div>
+    <div class="mf-body">
+      <div class="mf-h">
+        <div class="t"><i class="${bad?'bad':''}"></i>${saBadge(s)} · ${letter}</div>
+        <button type="button" class="x mf-lane-close" title="Hide (reopens on next sync)">×</button>
+      </div>
+      <div class="ms-row"><span>Total:</span><b>${m.total} items</b></div>
+      <div class="ms-row"><span>Done:</span><b class="ok">${m.done} (${m.pct}%)</b></div>
+      <div class="ms-bar"><i style="width:${m.pct}%"></i></div>
+      <div class="ms-row"><span>Remaining:</span><b class="warn">${m.remaining}</b></div>
+      <div class="ms-row"><span>Blocked:</span><b class="bad">${m.blocked}</b></div>
+      <div class="ms-row"><span>Status:</span><b class="cyan">${esc(st)}</b></div>
+      <div class="ms-row"><span>Sub-agent:</span><b>${who}</b></div>
+      <div class="ms-row"><span>Talk to:</span><b class="ok">ORCH only</b></div>
+      <div class="ms-foot"><span class="t mf-clock">${esc(clock)}</span><span class="mf-age">${esc(ageTxt)}${connOk===false?' · conn?':''}</span></div>
+    </div>
+  </div>`
+}
+
+/** Fleet mission rows HTML — shared by LIST bar + CLAW head (Looplet fleet). */
+function fleetMissionRowsHtml(){
+  const m = missionTotals(sessions)
+  const focus = selectedId ? sessions.find(s=>s.sessionId===selectedId) : null
+  const clock = missionClockText()
+  const ageTxt = missionAgeText()
+  const who = focus
+    ? `ORCH → ${agentRef(focus)} · ${esc(focus.repoId||'')} · fleet ${m.n}`
+    : `ORCH fleet · ${m.n} sub-agent${m.n===1?'':'s'} · ${viewMode.toUpperCase()}`
+  return `
+    <div class="ms-row"><span>Total:</span><b>${m.total} items</b></div>
+    <div class="ms-row"><span>Terminal (done):</span><b class="ok">${m.done} (${m.pct}%)</b></div>
+    <div class="ms-bar"><i style="width:${m.pct}%"></i></div>
+    <div class="ms-row"><span>Code remaining:</span><b class="warn">${m.remaining}</b></div>
+    <div class="ms-row"><span>User-blocked:</span><b class="bad">${m.blocked}</b></div>
+    <div class="ms-row"><span>Sub-agents:</span><b class="cyan">${m.completed} done · ${m.workers} active</b></div>
+    <div class="ms-row"><span>Talk to:</span><b class="ok">ORCH only</b></div>
+    <div class="ms-row"><span>Scope:</span><b>${who}</b></div>
+    <div class="ms-foot"><span class="t mf-clock" id="mf-clock">${esc(clock)}</span><span class="mf-age" id="mf-age">${esc(ageTxt)}${connOk===false?' · conn?':''}</span></div>`
+}
+
+function fleetMissionEmbeddedHtml(){
+  if(!missionFloatOpen) return ''
+  const m = missionTotals(sessions)
+  const bad = connOk===false || m.blocked>0
+  return `<div class="claw-mission" id="claw-mission">
+    <div class="mf-h">
+      <div class="t"><i class="${bad?'bad':''}" id="claw-mf-dot"></i>MISSION STATUS · FLEET</div>
+    </div>
+    <div id="claw-mf-rows">${fleetMissionRowsHtml()}</div>
+  </div>`
+}
+
+function renderMissionFloat(){
+  const el = $('mission-float')
+  const shell = $('mission-sticky')
+  if(!el) return
+  // MAP: per-lane cards. CLAW: mission lives inside LOOPLET FLEET head (not floating).
+  const mapPerLane = viewMode==='map' && sessions.length > 0
+  const clawEmbed = viewMode==='claw' && sessions.length > 0
+  if(!missionFloatOpen){
+    el.hidden = true
+    if(shell) shell.hidden = true
+    document.querySelectorAll('.lane-mission').forEach(n=>{ n.hidden = true })
+    const cm = $('claw-mission')
+    if(cm) cm.hidden = true
+    return
+  }
+  if(mapPerLane || clawEmbed){
+    el.hidden = true
+    if(shell) shell.hidden = true
+    document.querySelectorAll('.lane-mission').forEach(n=>{ n.hidden = !mapPerLane })
+    return
+  }
+  el.hidden = false
+  if(shell) shell.hidden = false
+  el.style.display = 'flex'
+  // Fleet totals for LIST / empty board
+  const m = missionTotals(sessions)
+  const icon = $('mf-icon')
+  if(icon) icon.innerHTML = pacGlyphHtml()
+  const dot = $('mf-dot')
+  if(dot) dot.classList.toggle('bad', connOk===false || m.blocked>0)
+  const rows = $('mf-rows')
+  if(rows) rows.innerHTML = fleetMissionRowsHtml()
+}
+
+/** Live clock + "updated Xs ago" on fleet bar, CLAW head, and per-lane cards */
+function armMissionTick(){
+  if(missionTickTimer) clearInterval(missionTickTimer)
+  missionTickTimer = setInterval(()=>{
+    if(!missionFloatOpen) return
+    const clockTxt = missionClockText()
+    const age = lastSyncedAt ? Math.max(0, Math.round((Date.now()-lastSyncedAt.getTime())/1000)) : null
+    const ageTxt = (age==null ? 'waiting…' : (age<2 ? 'just now' : `updated ${age}s ago`)) + (connOk===false ? ' · conn?' : '')
+    document.querySelectorAll('.mf-clock, #mf-clock').forEach(n=>{ n.textContent = clockTxt })
+    document.querySelectorAll('.mf-age, #mf-age').forEach(n=>{
+      if(lastSyncedAt || age==null) n.textContent = ageTxt
+    })
+  }, 1000)
+}
+
+function renderLanes(){
+  const root=$('lanes'), empty=$('empty')
+  setCols()
+  if(!sessions.length){
+    root.innerHTML=''
+    empty.style.display='block'
+    empty.classList.remove('offline')
+    if(!empty.dataset.offline){
+      empty.innerHTML='<h2>SHOWTIME</h2><p>Waiting for sessions… Arm autopro — the TV card lives in chat, not here.</p>'
+    }
+    return
+  }
+  // Never keep a black OFFLINE slab over live Pac lanes
+  empty.style.display='none'
+  empty.classList.remove('offline')
+  empty.dataset.offline = ''
+  root.innerHTML = sessions.map(s=>{
+    const todos=s.todo||[]
+    const total=Math.max(1, todos.length||s.slice?.total||1)
+    const done=s.counts?.done||0
+    const prog = total>0 ? done/total : (s.progress||0)
+    // Pac at end when clear; otherwise along progress
+    const st=s.status||'running'
+    const clear = st==='complete' || (done>=total && total>0)
+    const queued = st==='queued' || (done===0 && st!=='running' && st!=='in-progress' && !s.needsInput && st!=='stalled' && st!=='blocked' && st!=='needs_input')
+    const pacPct = clear ? 96 : Math.min(0.92, Math.max(0.04, prog || 0.06))*100
+    // pellets: pink ahead of pac, dim/eaten behind
+    let pellets=''
+    const pelletCount = Math.min(24, Math.max(8, total*2))
+    for(let i=0;i<pelletCount;i++){
+      const x=((i+0.5)/pelletCount)*100
+      const eaten = x < pacPct - 2
+      const dim = queued || st==='stalled'
+      pellets += `<div class="pellet ${eaten?'eaten':''} ${dim&&!eaten?'dim':''}" style="left:calc(${x}% - 4px)"></div>`
+    }
+    // Ghost for queued/stalled/blocked — ahead or mid track
+    let ghost=''
+    const gi=(s.lane||1)%GHOST.length
+    if(queued || st==='stalled' || st==='blocked'){
+      const gx = queued ? Math.min(88, 20 + (s.lane||1)*12) : Math.min(90, pacPct+18)
+      ghost = `<div class="ghost-sprite" style="left:calc(${gx}% - 11px);color:${GHOST[gi]}">${ghostSvg(GHOST[gi])}</div>`
+    } else if(!clear && prog < 1){
+      const gx = Math.min(94, pacPct+14)
+      ghost = `<div class="ghost-sprite" style="left:calc(${gx}% - 11px);color:${GHOST[gi]};opacity:.85">${ghostSvg(GHOST[gi])}</div>`
+    }
+    const qs=oq(s)
+    const flash=s.needsInput||qs.length||st==='needs_input'?'qflash':''
+    const qprev=qs.length?`<div class="lane-q">? ${esc((qs[0].text||'').slice(0,110))}${qs.length>1?` +${qs.length-1}`:''}</div>`:''
+    const letter = laneLetter(s.lane)
+    const sa = saBadge(s)
+    const title = `${sa} · ${(s.repoId||'CHAT')}` + (s.branch ? ` · ${s.branch}` : '')
+    let meta = `${done}/${total}`
+    let metaCls = ''
+    if(clear){ meta = `${done}/${total} · CLEAR!`; metaCls='clear' }
+    else if(st==='stalled'||st==='blocked'){ meta = `${done}/${total} · ${st.toUpperCase()}`; metaCls='stalled' }
+    else if(queued){ meta = `${done}/${total} · QUEUED`; metaCls='queued' }
+    else if(st==='needs_input' || s.needsInput || oq(s).length){ meta = `${done}/${total} · ORCH HOLD`; metaCls='stalled' }
+    else { meta = `${done}/${total}` }
+    // status line under track (cyan like reference)
+    const sliceLine = s.slice
+      ? `${s.slice.id} ${s.slice.title||''}`.trim()
+      : (s.stopReason || s.branch || 'IN PROGRESS')
+    const statusBits = []
+    if(s.slice?.state==='in-progress' || st==='running') statusBits.push('RUNNING')
+    if(done) statusBits.push(`${done} DONE`)
+    if(s.stopReason) statusBits.push(s.stopReason)
+    const sub = [sliceLine, statusBits.join(' · ')].filter(Boolean).join(' — ')
+    const trackCls = [st, clear?'complete':'', queued?'queued':''].filter(Boolean).join(' ')
+    // if queued with ghost only, still show pac at start when running-ish
+    const showPac = !queued || st==='running' || clear || st==='needs_input' || st==='stalled'
+    const pacOnTrack = (queued && !clear) ? '' : (showPac ? pacSpriteHtml(pacPct) : '')
+    // Mission status attached to top of THIS Pac-Man — same width as the lane/track
+    return `<div class="lane ${flash}" data-id="${s.sessionId}">
+      ${laneMissionHtml(s)}
+      <div class="lane-h">
+        <div class="name"><span class="letter">${letter}</span> ${esc(title)} <span class="dim">· Chat ${subAgentNo(s)} · ${esc(s.slice?.id||'work')}</span></div>
+        <div class="meta ${metaCls}">${esc(meta)}</div>
+      </div>
+      <div class="track ${trackCls}">
+        ${pellets}
+        ${ghost}
+        ${pacOnTrack}
+      </div>
+      <div class="lane-sub">${esc(sub)}</div>
+      ${qprev}
+    </div>`
+  }).join('')
+  root.querySelectorAll('.lane').forEach(el=>el.addEventListener('click',e=>{
+    if(e.target.closest('.mf-lane-close, .mission-float .x')) return
+    e.stopPropagation()
+    selectedId=el.dataset.id
+    dockOpen=true; applyChrome()
+    render()
+  }))
+  root.querySelectorAll('.mf-lane-close').forEach(btn=>{
+    btn.addEventListener('click', e=>{
+      e.stopPropagation()
+      missionFloatOpen = false
+      renderMissionFloat()
+      // hide without full re-render so pan/zoom stays put
+      document.querySelectorAll('.lane-mission').forEach(n=>{ n.hidden = true })
+    })
+  })
+  const d=sessions.reduce((a,s)=>a+(s.counts?.done||0),0)
+  $('score-1up').textContent=String(d*100)
+  $('score-hi').textContent=String(Math.max(9000, d*100))
+}
+
+function renderTabs(){
+  if(!sessions.length){ $('tabs').innerHTML=''; return }
+  if(!selectedId || !sessions.find(s=>s.sessionId===selectedId)) selectedId=sessions[0].sessionId
+  $('tabs').innerHTML=sessions.map(s=>
+    `<button type="button" class="${s.sessionId===selectedId?'on':''}" data-id="${s.sessionId}" title="${agentRef(s)} — talk via ORCH only">${saBadge(s)}${s.needsInput||oq(s).length?' !':''}</button>`
+  ).join('')
+  $('tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{selectedId=b.dataset.id;render()})
+}
+
+const panelOpen = JSON.parse(localStorage.getItem('st-panels')||'{}')
+function panelCls(id, def=true){
+  const open = panelOpen[id]!==undefined ? panelOpen[id] : def
+  return open ? 'panel' : 'panel collapsed'
+}
+function wirePanels(root){
+  root.querySelectorAll('.panel h4[data-panel]').forEach(h=>{
+    h.onclick=()=>{
+      const id=h.dataset.panel
+      const p=h.parentElement
+      p.classList.toggle('collapsed')
+      panelOpen[id]=!p.classList.contains('collapsed')
+      localStorage.setItem('st-panels', JSON.stringify(panelOpen))
+      const chev=h.querySelector('.chev')
+      if(chev) chev.textContent = p.classList.contains('collapsed') ? '▸' : '▾'
+    }
+  })
+}
+
+function renderOps(){
+  const s=sessions.find(x=>x.sessionId===selectedId)
+  const box=$('ops')
+  if(!s){ box.innerHTML='<div class="panel"><div class="body" style="color:var(--muted)">No session</div></div>'; return }
+
+  const todos=s.todo||[]
+  const c=s.counts||{}
+  const done=c.done||todos.filter(t=>t.state==='done').length
+  const total=todos.length||((c.pending||0)+(c.inProgress||0)+(c.done||0)+(c.blocked||0))||1
+  const remaining=(c.pending||0)+(c.inProgress||0) || todos.filter(t=>t.state==='pending'||t.state==='in-progress').length
+  const blocked=(c.blocked||0)+oq(s).length+(s.needsInput?1:0)
+  const pct=total?Math.round((done/total)*100):0
+  const healthy=!['stalled','blocked','needs_input','error'].includes(s.status)
+  const st=s.stats||{}, tok=st.tokens||{}, spd=st.speed||{}, code=st.code||{}
+  const clock=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})
+
+  // In-flight items: active + open questions
+  const inflight=[]
+  const active=todos.filter(t=>t.state==='in-progress')
+  if(active.length) active.forEach(t=>inflight.push({id:t.id,text:t.text,st:'in progress'}))
+  else if(s.slice) inflight.push({id:s.slice.id,text:s.slice.title||'Active slice',st:s.status||'running'})
+  oq(s).forEach(q=>inflight.push({id:q.sliceId||'Q',text:q.text,st:'ORCH hold — answer via head'}))
+  if(s.status==='stalled'||s.status==='blocked')
+    inflight.push({id:'STOP',text:s.stopReason||s.status,st:s.status})
+
+  const inflightHtml=inflight.length?inflight.map(it=>`
+    <div class="inflight-item">
+      <div class="id">${esc(it.id)}</div>
+      <div class="tx">${esc(it.text)}</div>
+      <div class="st">${esc(it.st)} · ${esc(s.repoId)} · ${esc(agentRef(s))}</div>
+    </div>`).join('') : '<div style="color:var(--muted)">Nothing in flight</div>'
+
+  const sent=(s.sentinel||[]).slice(0,16)
+  const sentHtml=sent.length?sent.map(e=>`
+    <div class="sent-block"><time>${esc((e.at||'').slice(11,16)||'—')}</time>${esc(e.text)}</div>
+  `).join('') : `<div class="sent-block"><time>${esc(clock.slice(0,5))}</time>No watchdog ticks yet — session ${esc(s.status||'idle')} on ${esc(s.repoId||'repo')}.</div>`
+
+  // Bookmarks: explicit, else incomplete todos
+  const bms=(s.bookmarks&&s.bookmarks.length)
+    ? s.bookmarks.map(b=>({id:b.id||b, text:b.label||b.text||b.id||''}))
+    : todos.filter(t=>t.state!=='done').map(t=>({id:t.id,text:t.text}))
+  const bmHtml=bms.slice(0,14).map((b,i)=>`
+    <div class="bm-item c${i%5}">
+      <div class="bid">${esc(b.id)}</div>
+      ${esc(b.text)}
+    </div>`).join('') || '<div style="color:var(--muted)">No bookmarks</div>'
+
+  const todosHtml=todos.map(t=>`<div class="todo ${t.state==='done'?'done':''}"><div class="mk"></div><div><b style="color:var(--cyan);font-family:ui-monospace,Consolas,monospace">${esc(t.id)}</b> ${esc(t.text)} <span style="color:var(--muted)">· ${esc(t.state)}</span></div></div>`).join('')||'—'
+
+  const chev=id=>(panelOpen[id]===false?'▸':'▾')
+
+  box.innerHTML=`
+    <div class="${panelCls('mission',true)}">
+      <h4 data-panel="mission"><span>● ${esc(saBadge(s))} · MISSION</span><span class="chev">${chev('mission')}</span></h4>
+      <div class="body">
+        <div class="ms-row"><span>Identity:</span><b class="cyan">${esc(agentRef(s))}</b></div>
+        <div class="ms-row"><span>Role:</span><b>Sub-agent under ORCH</b></div>
+        <div class="ms-row"><span>Talk to:</span><b class="ok">ORCH only (not this agent)</b></div>
+        <div class="ms-row"><span>Total:</span><b>${total} items</b></div>
+        <div class="ms-row"><span>Terminal (done):</span><b class="ok">${done} (${pct}%)</b></div>
+        <div class="ms-bar"><i style="width:${pct}%"></i></div>
+        <div class="ms-row"><span>Code remaining:</span><b class="warn">${remaining}</b></div>
+        <div class="ms-row"><span>Waiting on you:</span><b class="bad">${blocked}</b></div>
+        <div class="ms-row"><span>Status:</span><b class="cyan">${esc(s.status||'—')}</b></div>
+        <div class="ms-row"><span>Repo:</span><b>${esc(s.repoId||'—')} ${s.branch?'· '+esc(s.branch):''}</b></div>
+        <div class="ms-foot"><span class="t">${esc(clock)}</span><span>updated just now</span></div>
+      </div>
+    </div>
+
+    <div class="${panelCls('inflight',true)}">
+      <h4 data-panel="inflight"><span>⚡ IN-FLIGHT</span><span class="chev">${chev('inflight')}</span></h4>
+      <div class="body">${inflightHtml}</div>
+    </div>
+
+    <div class="${panelCls('live',true)}">
+      <h4 data-panel="live"><span>● LIVE STATUS</span><span class="chev">${chev('live')}</span></h4>
+      <div class="body">
+        ${healthy
+          ? `<div class="live-ok">✓ No new errors — loops healthy</div>`
+          : `<div class="live-bad">FIX: ${esc(s.stopReason||s.status)}</div>`}
+        <div style="font-size:10px;color:var(--muted);margin-top:4px">Lane ${s.lane} · ${esc(s.sessionId||'').slice(0,14)}</div>
+      </div>
+    </div>
+
+    <div class="${panelCls('sentinel',true)}">
+      <h4 data-panel="sentinel"><span>○ SENTINEL — VERIFICATION LOG</span><span class="chev">${chev('sentinel')}</span></h4>
+      <div class="body">${sentHtml}</div>
+    </div>
+
+    <div class="${panelCls('bookmarks',true)}">
+      <h4 data-panel="bookmarks"><span>🔖 BOOKMARKS</span><span class="chev">${chev('bookmarks')}</span></h4>
+      <div class="body">${bmHtml}</div>
+    </div>
+
+    <div class="${panelCls('checklist',false)}">
+      <h4 data-panel="checklist"><span>✓ FULL CHECKLIST</span><span class="chev">${chev('checklist')}</span></h4>
+      <div class="body">${todosHtml}</div>
+    </div>
+
+    <div class="${panelCls('steer',false)}">
+      <h4 data-panel="steer"><span>💬 COMMENT / STEER</span><span class="chev">${chev('steer')}</span></h4>
+      <div class="body field">
+        <textarea id="steer-text" placeholder="Steer next slice or leave a note…"></textarea>
+        <div class="row"><button type="button" id="btn-note">Comment</button><button type="button" class="ghost" id="btn-steer">Steer</button></div>
+      </div>
+    </div>
+
+    <div class="${panelCls('tokens',false)}">
+      <h4 data-panel="tokens"><span>📊 TOKEN STATS</span><span class="chev">${chev('tokens')}</span></h4>
+      <div class="body">
+        SAVED <b class="ok">${Math.round(tok.saved||0)}</b>
+        <div class="sg" style="margin-top:6px">
+          <div><div class="k">TOK/S</div><div class="v">${Number(spd.tokPerSecAvg||spd.tokPerSec||0).toFixed(1)}</div></div>
+          <div><div class="k">TOK/MIN</div><div class="v">${Math.round(spd.tokPerMin||0)}</div></div>
+          <div><div class="k">LINES +</div><div class="v">${code.linesAdded||0}</div></div>
+          <div><div class="k">FILES</div><div class="v">${code.filesCreated||0}</div></div>
+        </div>
+      </div>
+    </div>`
+
+  wirePanels(box)
+  $('btn-note')?.addEventListener('click', async()=>{
+    const text=$('steer-text').value.trim(); if(!text) return
+    await fetch(`/api/sessions/${s.sessionId}/notes`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})
+    refresh()
+  })
+  $('btn-steer')?.addEventListener('click', async()=>{
+    const text=$('steer-text').value.trim(); if(!text) return
+    await fetch(`/api/sessions/${s.sessionId}/steers`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,target:s.slice?.id})})
+    toast('Steer queued', agentRef(s)+' via ORCH'); refresh()
+  })
+}
+
+/** Topic ORCH is asking about for this sub-agent (slice / open Q / repo). */
+function orchTopicFor(s, q){
+  if(q?.sliceId && s?.slice?.title && q.sliceId===s.slice.id)
+    return `${q.sliceId} · ${s.slice.title}`
+  if(q?.sliceId) return String(q.sliceId)
+  if(s?.slice?.id) return `${s.slice.id}${s.slice.title?` · ${s.slice.title}`:''}`
+  if(q?.text) return String(q.text).slice(0,56)
+  return s?.repoId || s?.branch || 'fleet work'
+}
+
+function renderLedges(){
+  const root=$('ledges')
+  setCols()
+  const sub=$('dock-sub')
+  if(sub){
+    const openN = sessions.reduce((a,s)=>a+oq(s).length,0)
+    sub.innerHTML = openN
+      ? `<b>ORCH desk</b> — ${openN} question${openN===1?'':'s'} on behalf of sub-agents`
+      : `<b>ORCH desk</b> — questions on behalf of sub-agents (SA-N = Chat N)`
+  }
+  if(!sessions.length){ root.innerHTML=''; return }
+  root.innerHTML=sessions.map(s=>{
+    const tab=ledgeTab[s.sessionId]||'questions'
+    const qs=oq(s)
+    const sa = saBadge(s)
+    const chatN = subAgentNo(s)
+    const topicDefault = orchTopicFor(s, qs[0] || null)
+    const notes=(s.notes||[]).slice(0,8).map(n=>`
+      <div class="qcard">
+        <div class="orch-from">ORCH · note re ${esc(sa)}</div>
+        <div class="orch-q">${esc(n.text)}</div>
+      </div>`).join('')||`<div style="color:var(--muted)">No ORCH notes for ${esc(sa)}</div>`
+    const qhtml=(s.questions||[]).map(q=>{
+      const topic = orchTopicFor(s, q)
+      const open = q.status==='open'
+      return `<div class="qcard ${open?'open':''}">
+        <div class="orch-from">ORCH asks · on behalf of ${esc(sa)} · Chat ${chatN}</div>
+        <div class="orch-topic">Topic: ${esc(topic)}${s.repoId?` · ${esc(s.repoId)}`:''}</div>
+        <div class="orch-q">${esc(q.text)}</div>
+        ${open?`
+          <div class="chips">${(q.chips||['Yes','No']).map(c=>`<button type="button" data-a="${esc(c)}" data-q="${q.id}" data-s="${s.sessionId}">${esc(c)}</button>`).join('')}</div>
+          <div class="compose">
+            <input data-in="${q.id}" placeholder="Reply to ORCH (for ${esc(sa)})…"/>
+            <button type="button" data-send="${q.id}" data-s="${s.sessionId}">Reply ORCH</button>
+          </div>
+        `:`<div class="ok">✓ ORCH relayed: ${esc(q.answer||'answered')}</div>`}
+      </div>`
+    }).join('')||`<div style="color:var(--muted)">No questions — ORCH has nothing open for ${esc(sa)}</div>`
+    const holdBanner = qs.length
+      ? `<div class="qcard open" style="margin-bottom:8px">
+          <div class="orch-from">ORCH HOLD</div>
+          <div class="orch-q">Orchestrator is asking you <b>on behalf of ${esc(sa)}</b> (Chat ${chatN}).</div>
+          <div class="orch-topic" style="margin-top:4px">You answer ORCH · ORCH tells ${esc(sa)} · topic: ${esc(topicDefault)}</div>
+        </div>`
+      : ''
+    return `<div class="ledge ${qs.length?'qflash':''}" data-sa="${esc(sa)}" data-id="${s.sessionId}">
+      <div class="ledge-h">
+        <div class="t">
+          <span class="orch-tag">ORCH → SUB-AGENT</span>
+          <span class="sa-line">${esc(sa)} · Chat ${chatN} · ${esc(s.repoId||'repo')}</span>
+          <div class="topic">Topic: ${esc(topicDefault)}</div>
+        </div>
+        <div class="t2">
+          <button type="button" class="${tab==='notes'?'on':''}" data-t="notes" data-id="${s.sessionId}">NOTES</button>
+          <button type="button" class="${tab==='questions'?'on':''}" data-t="questions" data-id="${s.sessionId}">Q${qs.length?' ·'+qs.length:''}</button>
+        </div>
+      </div>
+      <div class="ledge-body">
+        ${holdBanner}
+        ${tab==='notes'?notes:qhtml}
+        ${tab==='questions'?`<div class="compose" style="margin-top:8px">
+          <input id="nq-${s.sessionId}" placeholder="ORCH: ask operator about ${esc(sa)} / topic…"/>
+          <button type="button" data-nq="${s.sessionId}">ORCH ask</button>
+        </div>`:''}
+      </div>
+    </div>`
+  }).join('')
+  root.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{ledgeTab[b.dataset.id]=b.dataset.t;renderLedges()})
+  root.querySelectorAll('[data-a]').forEach(b=>b.onclick=async()=>{
+    await fetch(`/api/sessions/${b.dataset.s}/questions`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({questionId:b.dataset.q,answer:b.dataset.a})})
+    refresh()
+  })
+  root.querySelectorAll('[data-send]').forEach(b=>b.onclick=async()=>{
+    const inp=root.querySelector(`input[data-in="${b.dataset.send}"]`)
+    const answer=(inp?.value||'').trim(); if(!answer) return
+    await fetch(`/api/sessions/${b.dataset.s}/questions`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({questionId:b.dataset.send,answer})})
+    refresh()
+  })
+  root.querySelectorAll('[data-nq]').forEach(b=>b.onclick=async()=>{
+    const text=($('nq-'+b.dataset.nq)?.value||'').trim(); if(!text) return
+    // Operator-originated: still stored on the sub-agent lane, framed as ORCH ask
+    await fetch(`/api/sessions/${b.dataset.nq}/questions`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})
+    dockOpen=true; applyChrome(); refresh()
+  })
+}
+
+function renderNeeds(){
+  const needy=sessions.filter(s=>s.needsInput||s.status==='needs_input'||oq(s).length)
+  const el=$('needs')
+  if(!needy.length){ el.classList.remove('show'); return }
+  const s=needy[0]
+  const q = oq(s)[0]
+  const more = needy.length>1 ? ` · +${needy.length-1} more` : ''
+  el.classList.add('show')
+  el.textContent = q
+    ? `🔔 ORCH holding for ${agentRef(s)} — “${(q.text||'').slice(0,72)}” — click to answer${more}`
+    : `🔔 ORCH holding for ${agentRef(s)} — needs your input — click to answer${more}`
+  el.onclick=()=>{ dockOpen=true; applyChrome(); selectedId=s.sessionId; ledgeTab[s.sessionId]='questions'; render() }
+}
+
+function hoWhen(iso){
+  if(!iso) return '—'
+  try{
+    const d=new Date(iso)
+    return d.toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})
+  }catch{ return String(iso).slice(0,16) }
+}
+
+function formatHandoverBlock(h){
+  const who = h.subAgentId || (h.lane?`SA-${h.lane}`:'SA-?')
+  const chat = h.chatLabel || (h.lane?`Chat ${h.lane}`:'')
+  const head = [
+    `## ${hoWhen(h.at)} · ${who}${chat?` · ${chat}`:''}${h.repoId?` · ${h.repoId}`:''}`,
+    `reason: ${h.reason||'handover'} · status: ${h.status||'—'} · id: ${h.id||'—'}`,
+    h.topic ? `topic: ${h.topic}` : null,
+    '',
+    h.text || '(empty)',
+    '',
+  ].filter(v=>v!==null).join('\n')
+  return head
+}
+
+function formatAllHandovers(){
+  const list=handovers||[]
+  if(!list.length) return '(no handover notes)'
+  return list.map(formatHandoverBlock).join('\n---\n\n')
+}
+
+async function copyText(text, okLabel){
+  const t=String(text||'')
+  try{
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(t)
+    }else{
+      const ta=document.createElement('textarea')
+      ta.value=t; ta.style.position='fixed'; ta.style.left='-9999px'
+      document.body.appendChild(ta); ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    toast('Copied', okLabel||'Handover on clipboard')
+    return true
+  }catch(e){
+    toast('Copy failed', String(e.message||e))
+    return false
+  }
+}
+
+function renderHandovers(){
+  const list=handovers||[]
+  const n=list.length
+  const pending=list.filter(h=>h.status==='pending').length
+  const btn=$('ho-folder-btn')
+  const cnt=$('ho-folder-cnt')
+  const badge=$('ho-folder-badge')
+  if(cnt) cnt.textContent = n===0 ? 'Empty' : (n===1 ? '1 note' : `${n} notes`)
+  if(badge) badge.textContent = String(n)
+  if(btn){
+    btn.classList.toggle('has-pending', pending>0)
+    btn.title = n
+      ? `Open handovers (${n}${pending?`, ${pending} pending`:''})`
+      : 'Handover folder (empty)'
+  }
+  // Keep modal list fresh if open
+  if(hoModalOpen) renderHandoverModalList()
+}
+
+function renderHandoverModalList(){
+  const box=$('ho-modal-list')
+  const sub=$('ho-modal-sub')
+  if(!box) return
+  const list=handovers||[]
+  const pending=list.filter(h=>h.status==='pending').length
+  if(sub){
+    sub.textContent = list.length
+      ? `${list.length} note${list.length===1?'':'s'}${pending?` · ${pending} pending`:''} · SA-N · Chat · time`
+      : 'No handover notes yet'
+  }
+  if(!list.length){
+    box.innerHTML='<div class="ho-empty-list">Folder is empty — notes appear on complete / stale / arm preflight.</div>'
+    return
+  }
+  box.innerHTML=list.map(h=>{
+    const who = h.subAgentId || (h.lane?`SA-${h.lane}`:'SA-?')
+    const chat = h.chatLabel || (h.lane?`Chat ${h.lane}`:'')
+    const pending = h.status==='pending'
+    return `<div class="ho-item ${pending?'pending':''}" data-ho-id="${esc(h.id)}">
+      <div class="ho-item-h">
+        <div>
+          <div class="who">📁 ${esc(who)}${chat?` · ${esc(chat)}`:''}</div>
+          <div class="when">${esc(hoWhen(h.at))}${h.repoId?` · ${esc(h.repoId)}`:''}${pending?' · pending':''}</div>
+          ${h.topic?`<div class="topic">Topic: ${esc(h.topic)}</div>`:''}
+        </div>
+      </div>
+      <pre>${esc(h.text||'(empty)')}</pre>
+      <div class="ho-item-actions">
+        <button type="button" data-ho-copy="${esc(h.id)}">Copy</button>
+      </div>
+    </div>`
+  }).join('')
+  box.querySelectorAll('[data-ho-copy]').forEach(b=>{
+    b.onclick=async()=>{
+      const h=(handovers||[]).find(x=>x.id===b.dataset.hoCopy)
+      if(!h) return
+      const who=h.subAgentId||'note'
+      await copyText(formatHandoverBlock(h), `${who} copied`)
+    }
+  })
+}
+
+function openHandoverModal(){
+  hoModalOpen=true
+  const modal=$('ho-modal')
+  if(!modal) return
+  renderHandoverModalList()
+  modal.classList.add('on')
+}
+
+function closeHandoverModal(){
+  hoModalOpen=false
+  $('ho-modal')?.classList.remove('on')
+}
+
+async function loadHandovers(){
+  try{
+    const r=await fetchLive('/api/handovers')
+    if(!r.ok) return
+    const j=await r.json()
+    handovers=j.handovers||[]
+    // Auto-deliver any pending (retry path if flush missed)
+    if((j.pending||0)>0){
+      try{
+        await fetchLive('/api/handovers/flush',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+        const r2=await fetchLive('/api/handovers')
+        if(r2.ok){ const j2=await r2.json(); handovers=j2.handovers||[] }
+      }catch{}
+    }
+    renderHandovers()
+  }catch{}
+}
+
+function applyViewMode(){
+  const board=$('board'), list=$('list-view'), claw=$('claw-view')
+  const isList = viewMode==='list'
+  const isClaw = viewMode==='claw'
+  const isMap = viewMode==='map'
+  board.classList.toggle('list-mode', isList)
+  board.classList.toggle('claw-mode', isClaw)
+  board.classList.toggle('map-mode', isMap)
+  list.classList.toggle('on', isList)
+  claw.classList.toggle('on', isClaw)
+  // MAP world lives inside board-stage (below mission header)
+  const world = $('world')
+  if(world) world.style.display = isMap ? '' : 'none'
+  const stage = $('board-stage') || board
+  const tools = stage.querySelector('.canvas-tools')
+  const hint = stage.querySelector('.canvas-hint')
+  // MAP + CLAW share pan/zoom tools; LIST is scroll-only
+  if(tools) tools.style.display = (isMap || isClaw) ? '' : 'none'
+  if(hint){
+    hint.style.display = (isMap || isClaw) ? '' : 'none'
+    hint.textContent = isClaw
+      ? 'Talk to ORCH only · SA-N = Chat N · pan/zoom · Fit · strings = ORCH → sub-agents'
+      : 'Drag canvas to pan · scroll to zoom · Fit frames all chats · SA-N = Chat N'
+  }
+  $('btn-list').classList.toggle('on', isList)
+  $('btn-map').classList.toggle('on', isMap)
+  $('btn-claw').classList.toggle('on', isClaw)
+  $('btn-list').setAttribute('aria-selected', isList?'true':'false')
+  $('btn-map').setAttribute('aria-selected', isMap?'true':'false')
+  $('btn-claw').setAttribute('aria-selected', isClaw?'true':'false')
+  localStorage.setItem('st-view', viewMode)
+  if(isList) renderList()
+  if(isClaw) renderClaw()
+  renderMissionFloat()
+  applyCanvas()
+  const modeChanged = lastViewMode !== viewMode
+  lastViewMode = viewMode
+  // Auto-fit only on first paint or when switching into MAP/CLAW (don't steal pan mid-ops)
+  if(isMap && sessions.length && (modeChanged || !mapFittedOnce)){
+    mapFittedOnce = true
+    requestAnimationFrame(()=>{ try{ fitAll() }catch{} })
+  }
+  if(isClaw && sessions.length && (modeChanged || !clawFittedOnce)){
+    clawFittedOnce = true
+    requestAnimationFrame(()=>{ try{ fitAll(); drawClawStrings() }catch{} })
+  }
+}
+
+/** Pixel invader from operator ref (coral block alien on black). 11×8 grid. */
+function invaderPixelSvg(unit=2, label=''){
+  const C = '#e07a5f'
+  const E = '#0a0c10'
+  // Body rows 0–5 (no legs). Eyes punched black.
+  const body = [
+    [3,0],[4,0],[5,0],[6,0],[7,0],
+    [2,1],[3,1],[4,1],[5,1],[6,1],[7,1],[8,1],
+    [1,2],[2,2],[3,2],[4,2],[5,2],[6,2],[7,2],[8,2],[9,2],
+    [0,3],[1,3],[2,3],[3,3],[4,3],[5,3],[6,3],[7,3],[8,3],[9,3],[10,3],
+    [0,4],[1,4],[2,4],[3,4],[4,4],[5,4],[6,4],[7,4],[8,4],[9,4],[10,4],
+    [2,5],[3,5],[4,5],[5,5],[6,5],[7,5],[8,5],
+  ]
+  const eyes = [[3,2],[4,2],[6,2],[7,2]]
+  const legL = [[2,6],[3,6],[2,7],[3,7]]
+  const legR = [[7,6],[8,6],[7,7],[8,7]]
+  const mid  = [[5,6],[5,7]]
+  const w = 11 * unit
+  const h = 8 * unit
+  const px = (pts)=>pts.map(([x,y])=>`<rect x="${x*unit}" y="${y*unit}" width="${unit}" height="${unit}" fill="${C}"/>`).join('')
+  const eye = eyes.map(([x,y])=>`<rect x="${x*unit}" y="${y*unit}" width="${unit}" height="${unit}" fill="${E}"/>`).join('')
+  const lab = label
+    ? `<text x="${w/2}" y="${h+unit*2.4}" text-anchor="middle" fill="#fdba74" font-size="${Math.max(5, unit*2.2)}" font-family="ui-monospace,Consolas,monospace" font-weight="700">${label}</text>`
+    : ''
+  const vbH = label ? h + unit * 3.5 : h
+  return `<svg viewBox="0 0 ${w} ${vbH}" width="${w}" height="${vbH}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" shape-rendering="crispEdges">
+    ${px(body)}${eye}<g class="leg-l">${px(legL)}</g><g class="leg-m">${px(mid)}</g><g class="leg-r">${px(legR)}</g>${lab}
+  </svg>`
+}
+
+function clawSvg(running){
+  const runCls = running ? 'running' : 'still'
+  return `<div class="claw-icon ${runCls}" title="${running?'working — legs marching':'not working — legs still'}">
+    ${invaderPixelSvg(2)}
+  </div>`
+}
+
+function orchSvg(state){
+  return `<div class="claw-orch ${state}" title="ORCH — fleet head">
+    ${invaderPixelSvg(3, 'ORCH')}
+  </div>`
+}
+
+function sessionWorkState(s){
+  // running legs / hold / stagnant
+  if(s.needsInput || s.status==='needs_input' || s.status==='blocked') return 'hold'
+  if(s.status==='stalled' || s.status==='error') return 'stagnant'
+  if(s.status==='complete') return 'done'
+  if(s.status==='running' || s.status==='in-progress' || (s.counts&&s.counts.inProgress>0)) return 'running'
+  // no recent progress → stagnant (bad)
+  const last = s.timer?.lastProgressAt || s.updatedAt
+  if(last){
+    const age = (Date.now() - new Date(last).getTime())/1000
+    if(age > 180) return 'stagnant'
+  }
+  return 'running'
+}
+
+function renderClaw(){
+  const stage=$('claw-stage')
+  if(!stage) return
+  if(!sessions.length){
+    stage.innerHTML=`<div style="text-align:center;padding:48px;color:var(--muted)">
+      ${orchSvg('stagnant')}
+      <div style="margin-top:12px">No fleet yet — arm autopro to grow the claw tree.</div>
+    </div>`
+    return
+  }
+  const k=kpis(sessions)
+  const holds=sessions.filter(s=>sessionWorkState(s)==='hold')
+  const stagnant=sessions.filter(s=>sessionWorkState(s)==='stagnant')
+  const anyRun=sessions.some(s=>sessionWorkState(s)==='running')
+  let orchState='working'
+  let headNote=''
+  if(stagnant.length && !anyRun && !holds.length){
+    orchState='stagnant'
+    headNote=`ORCH idle — ${stagnant.length} sub-agent(s) stagnant (${stagnant.map(saBadge).join(', ')})`
+  } else if(holds.length){
+    orchState='holding'
+    const h0 = holds[0]
+    const q0 = oq(h0)[0]
+    headNote = q0
+      ? `ORCH holding for ${agentRef(h0)} — Q: ${(q0.text||'').slice(0,80)}`
+      : `ORCH holding for ${agentRef(h0)} · ${h0.repoId||''} — ${h0.stopReason||'needs input'}`
+  } else if(anyRun){
+    orchState='working'
+  }
+
+  // Mission Status is part of LOOPLET FLEET head (not a detached floating modal)
+  const head = `<div class="claw-head" id="claw-head">
+    <div class="claw-head-card">
+      <div class="ht">LOOPLET FLEET · ORCHESTRATOR</div>
+      <div class="hs">You talk only to ORCH · ${sessions.length} sub-agent(s) SA-1…SA-${sessions.length || 0} · ${k.done}/${k.total} slices</div>
+      <div class="hb">
+        <span>${k.inflight} in flight</span>
+        <span>${k.needs} waiting on you</span>
+        <span>${k.p0} P0</span>
+        <span>ORCH only</span>
+      </div>
+      ${fleetMissionEmbeddedHtml()}
+      ${orchSvg(orchState)}
+      ${headNote?`<div class="claw-note">${esc(headNote)}</div>`:''}
+    </div>
+    <div class="claw-spine"></div>
+  </div>`
+
+  const branches = sessions.map(s=>{
+    const ws=sessionWorkState(s)
+    const todos=s.todo||[]
+    const done=s.counts?.done||todos.filter(t=>t.state==='done').length
+    const total=Math.max(1, todos.length||((s.counts?.pending||0)+(s.counts?.inProgress||0)+(s.counts?.done||0)+(s.counts?.blocked||0))||1)
+    const pct=Math.round((done/total)*100)
+    const badge = ws==='running'?'<span class="badge run">ACTIVE</span>'
+      : ws==='hold'?'<span class="badge hold">HOLDING</span>'
+      : ws==='stagnant'?'<span class="badge bad">STAGNANT</span>'
+      : '<span class="badge ok">DONE</span>'
+    const runningLegs = ws==='running'
+    const edgeCls = ws==='running'?'run':ws==='hold'?'hold':ws==='stagnant'?'stagnant':ws==='done'?'done':''
+    const nodes = (todos.length?todos:[{id:s.slice?.id||'—',text:s.slice?.title||s.status,state:s.status||'pending'}]).slice(0,12).map(t=>{
+      const st=t.state||'pending'
+      const nrun = st==='in-progress'
+      const nhold = st==='blocked'
+      const ndone = st==='done'
+      const cls = ndone?'done':nrun?'run':nhold?'hold':'bad'
+      const legs = nrun
+      let holdNote=''
+      if(nhold || (ws==='hold' && nrun)) holdNote=`<div class="claw-hold-note">holding — ${esc(s.stopReason||'awaiting operator / dependency')}</div>`
+      if(ws==='hold' && st==='pending' && oq(s).length) holdNote=`<div class="claw-hold-note">ORCH hold — ${esc(saBadge(s))} question open</div>`
+      return `<div class="claw-node ${cls}" data-sid="${s.sessionId}">
+        ${clawSvg(legs)}
+        <div class="nt">
+          <div class="nid">${esc(t.id||'')}</div>
+          <div class="nx">${esc(t.text||'')}</div>
+          <div class="ns">${esc(st)}${ndone?' · ✓':''}${nrun?' · working':''}</div>
+          ${holdNote}
+        </div>
+      </div>`
+    }).join('')
+
+    const openQ = oq(s)[0]
+    return `<div class="claw-branch" data-edge="${edgeCls}" data-sid="${s.sessionId}">
+      <div class="claw-branch-line"></div>
+      <div class="claw-branch-card">
+        <div class="bh">
+          <div>
+            <div class="bt">${esc(saBadge(s))} · Chat ${subAgentNo(s)} · ${esc(s.repoId||'')}</div>
+            <div class="bm">sub-agent · ${esc(s.branch||'')} · ${esc(s.sessionId||'').slice(0,12)}</div>
+          </div>
+          ${badge}
+        </div>
+        <div class="bb">
+          <div class="prog"><i style="width:${pct}%"></i></div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            ${clawSvg(runningLegs)}
+            <div style="font-size:10px;color:var(--muted)">
+              ${runningLegs?'legs running — working':ws==='hold'?'legs still — ORCH holding':ws==='stagnant'?'legs still — not working (bad)':'complete'}
+            </div>
+          </div>
+          ${ws==='hold'?`<div class="claw-hold-note" style="margin-bottom:8px">
+            <b>ORCH HOLD</b> · ${esc(agentRef(s))}
+            ${openQ?`<div style="margin-top:3px">Q: ${esc((openQ.text||'').slice(0,100))}</div>`:''}
+            ${s.stopReason&&!openQ?`: ${esc(s.stopReason)}`:''}
+            <div style="margin-top:3px;opacity:.85">Answer via orchestrator — do not address this sub-agent directly</div>
+          </div>`:''}
+          ${ws==='stagnant'?`<div class="claw-hold-note" style="margin-bottom:8px;color:var(--rose);border-color:rgba(251,113,133,.4)">Stagnant — ORCH should notice ${esc(saBadge(s))}</div>`:''}
+          ${nodes}
+        </div>
+      </div>
+    </div>`
+  }).join('')
+
+  // Node-style strings (SVG edges) head → each branch; redraw after layout
+  stage.innerHTML = `<div class="claw-tree" id="claw-tree">
+    <svg class="claw-strings" id="claw-strings" aria-hidden="true"></svg>
+    ${head}
+    <div class="claw-branches" id="claw-branches">${branches}</div>
+  </div>`
+  stage.querySelectorAll('.claw-node,[data-sid]').forEach(el=>{
+    el.addEventListener('click',e=>{
+      if(e.target.closest('.mf-lane-close')) return
+      const sid=el.dataset.sid||el.closest('[data-sid]')?.dataset?.sid
+      if(!sid) return
+      selectedId=sid
+      rightOpen=true; applyChrome(); render()
+    })
+  })
+  // Layout first, then strings in unscaled layout space (never use scaled client rects alone)
+  applyCanvas()
+  requestAnimationFrame(()=>{
+    drawClawStrings()
+    requestAnimationFrame(()=>drawClawStrings())
+  })
+}
+
+/**
+ * Measure el relative to root in pure layout pixels.
+ * Temporarily clears claw-world transform so getBoundingClientRect matches the SVG viewBox
+ * (screen rects under scale() were the root cause of misaligned strings).
+ */
+function layoutRectIn(el, root){
+  if(!el || !root) return { x:0, y:0, w:0, h:0 }
+  const er = el.getBoundingClientRect()
+  const rr = root.getBoundingClientRect()
+  return {
+    x: er.left - rr.left,
+    y: er.top - rr.top,
+    w: er.width,
+    h: er.height
+  }
+}
+
+/** Draw node strings from fleet head → each chat branch in LAYOUT space. */
+function drawClawStrings(){
+  const tree = $('claw-tree')
+  const svg = $('claw-strings')
+  const head = $('claw-head')
+  const world = $('claw-world')
+  const branches = tree ? tree.querySelectorAll('.claw-branch') : []
+  if(!tree || !svg || !head || !branches.length) return
+
+  // Identity transform while measuring — viewBox is layout-sized
+  const prevTf = world ? world.style.transform : ''
+  if(world) world.style.transform = 'translate3d(0,0,0) scale(1)'
+
+  const w = Math.max(tree.scrollWidth, tree.offsetWidth, tree.clientWidth, 1)
+  const h = Math.max(tree.scrollHeight, tree.offsetHeight, tree.clientHeight, 1)
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`)
+  svg.setAttribute('width', String(w))
+  svg.setAttribute('height', String(h))
+  svg.style.width = w + 'px'
+  svg.style.height = h + 'px'
+
+  // Anchor: bottom-center of spine (or head card)
+  const spine = head.querySelector('.claw-spine')
+  const card = head.querySelector('.claw-head-card') || head
+  const a = layoutRectIn(spine || card, tree)
+  const x0 = a.x + a.w / 2
+  const y0 = a.y + a.h
+
+  let paths = ''
+  branches.forEach(br=>{
+    const brc = br.querySelector('.claw-branch-card') || br
+    const r = layoutRectIn(brc, tree)
+    const x1 = r.x + r.w / 2
+    const y1 = r.y // land on top edge of card
+    const midY = y0 + Math.max(28, (y1 - y0) * 0.55)
+    const cls = br.dataset.edge || ''
+    paths += `<path class="${cls}" d="M ${x0.toFixed(1)} ${y0.toFixed(1)} C ${x0.toFixed(1)} ${midY.toFixed(1)}, ${x1.toFixed(1)} ${midY.toFixed(1)}, ${x1.toFixed(1)} ${y1.toFixed(1)}"/>`
+  })
+  svg.innerHTML = paths
+
+  // Restore pan/zoom
+  if(world) world.style.transform = prevTf || `translate3d(${panX}px, ${panY}px, 0) scale(${scale})`
+}
+
+function renderList(){
+  const scroll=$('list-scroll'), sent=$('list-sentinel')
+  if(!scroll) return
+  const needy=sessions.filter(s=>s.needsInput||s.status==='needs_input'||s.status==='stalled'||s.status==='blocked')
+  if(needy.length){
+    const s=needy[0]
+    sent.style.display='block'
+    sent.innerHTML=`SENTINEL — ORCH HOLD · ${needy.length} SUB-AGENT${needy.length>1?'S':''}
+      <div class="sub">${esc(agentRef(s))} · ${esc(s.repoId)} · ${esc(s.stopReason||s.status)} · ${esc(s.slice?s.slice.id+' '+s.slice.title:'')} · talk to ORCH only</div>`
+  } else {
+    sent.style.display='block'
+    sent.innerHTML=`SENTINEL — ALL CLEAR <div class="sub">No holds · ${sessions.length} sub-agent(s) under ORCH · SA-N = Chat N</div>`
+    sent.style.background='linear-gradient(90deg,#0a2a1a,#0c1210)'
+    sent.style.color='var(--lime)'
+    sent.style.borderBottomColor='rgba(163,230,53,.3)'
+  }
+  if(!sessions.length){
+    scroll.innerHTML='<div style="padding:40px;text-align:center;color:var(--muted)">No sessions — arm autopro to fill the list.</div>'
+    return
+  }
+  // One section per chat/session (ledger lane)
+  scroll.innerHTML = sessions.map(s=>{
+    const todos=s.todo||[]
+    const done=s.counts?.done||todos.filter(t=>t.state==='done').length
+    const total=todos.length||((s.counts?.pending||0)+(s.counts?.inProgress||0)+(s.counts?.done||0)+(s.counts?.blocked||0))||1
+    const letter=laneLetter(s.lane)
+    const coll=listCollapsed[s.sessionId]?'collapsed':''
+    const rows = (todos.length?todos:[{id:s.slice?.id||'—',text:s.slice?.title||s.status||'session',state:s.status||'pending'}]).map(t=>{
+      const st=t.state||'pending'
+      const tags=[]
+      if(/P0/i.test(t.id||'')||/P0/i.test(t.text||'')) tags.push('<span class="tag p0">P0</span>')
+      if(st==='done') tags.push('<span class="tag done">done</span>')
+      else if(st==='in-progress') tags.push('<span class="tag run">running</span>')
+      else if(st==='blocked') tags.push('<span class="tag p0">blocked</span>')
+      else tags.push('<span class="tag">pending</span>')
+      tags.push(`<span class="tag">${esc(t.id||'')}</span>`)
+      return `<div class="list-row" data-sid="${s.sessionId}" data-tid="${esc(t.id||'')}">
+        <div>
+          <div class="tags">${tags.join('')}</div>
+          <div class="title">${esc(t.text||t.id||'')}</div>
+        </div>
+        <button type="button" class="btn" data-open="${s.sessionId}">open</button>
+      </div>`
+    }).join('')
+    return `<div class="list-section ${coll}" data-sec="${s.sessionId}">
+      <div class="list-section-h" data-toggle="${s.sessionId}">
+        <div>
+          <div class="lt">${letter} · ${esc(saBadge(s))} · Chat ${subAgentNo(s)} · ${esc(s.repoId||'chat')}</div>
+          <div class="ls">${esc(s.branch||'')} · ${esc(s.status||'')}${s.stopReason?' · '+esc(s.stopReason):''}</div>
+        </div>
+        <div class="prog">${done}/${total}</div>
+      </div>
+      <div class="list-rows">${rows}</div>
+    </div>`
+  }).join('')
+  scroll.querySelectorAll('[data-toggle]').forEach(h=>h.onclick=()=>{
+    const id=h.dataset.toggle
+    listCollapsed[id]=!listCollapsed[id]
+    localStorage.setItem('st-list-sec', JSON.stringify(listCollapsed))
+    renderList()
+  })
+  scroll.querySelectorAll('[data-open]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation()
+    selectedId=b.dataset.open
+    viewMode='map'
+    applyViewMode()
+    rightOpen=true; applyChrome()
+    render()
+  })
+}
+
+function render(){
+  renderLeft(); renderLanes(); renderTabs(); renderOps(); renderLedges(); renderNeeds()
+  renderHandovers()
+  if(viewMode==='list') renderList()
+  if(viewMode==='claw') renderClaw()
+  applyViewMode()
+  renderMissionFloat()
+  updateSyncChrome()
+  // First-time MAP/CLAW fit handled in applyViewMode (mode change / once)
+}
+
+function formatSyncTime(d){
+  if(!d) return '—'
+  try{
+    return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})
+  }catch{ return d.toISOString().slice(11,19) }
+}
+
+/** Cache-busting fetch — SYNC is for connection / browser cache, not a soft UI tick. */
+function fetchLive(path, opts={}){
+  const u = new URL(path, location.origin)
+  u.searchParams.set('_', String(Date.now()))
+  u.searchParams.set('nocache', '1')
+  return fetch(u.toString(), {
+    cache: 'no-store',
+    credentials: 'same-origin',
+    ...opts,
+    headers: {
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      ...(opts.headers||{})
+    }
+  })
+}
+
+function markSynced(source, ok=true){
+  lastSyncedAt = new Date()
+  lastSyncSource = source || ''
+  connOk = ok
+  updateSyncChrome()
+}
+
+function updateSyncChrome(){
+  const btn = $('btn-sync')
+  const last = $('sync-last')
+  const auto = $('sync-auto')
+  const bar = $('sync-bar')
+  if(btn){
+    btn.classList.toggle('spinning', !!syncing)
+    btn.disabled = !!syncing
+    btn.title = syncing
+      ? 'Reconnecting… busting browser cache'
+      : 'Force connection · bypass browser cache (MAP · LIST · CLAW). Shift+click = hard reload board HTML'
+  }
+  if(bar){
+    bar.dataset.conn = connOk===false ? 'off' : (connOk===true ? 'on' : 'unk')
+  }
+  if(last){
+    const src = lastSyncSource ? ` · ${lastSyncSource}` : ''
+    const state = connOk===false ? ' · offline' : (connOk===true ? '' : '')
+    last.textContent = lastSyncedAt
+      ? `Last connected: ${formatSyncTime(lastSyncedAt)}${src}${state}`
+      : 'Last connected: —'
+    last.title = lastSyncedAt
+      ? `${lastSyncedAt.toISOString()} — connection / cache-bypass probe`
+      : 'Not connected yet — hit SYNC if the board looks stale'
+  }
+  if(auto){
+    const sec = Math.round(SYNC_MS/1000)
+    auto.textContent = autoSync ? `AUTO ${sec}s` : 'AUTO OFF'
+    auto.classList.toggle('off', !autoSync)
+    auto.title = autoSync
+      ? `Auto connection poll every ${sec}s (no-store). Click to pause`
+      : 'Auto connection poll paused. Click to resume'
+  }
+}
+
+function armAutoSync(){
+  if(autoSyncTimer){ clearInterval(autoSyncTimer); autoSyncTimer = null }
+  if(autoSync){
+    // Soft poll — still no-store, but does not thrash the live stream
+    autoSyncTimer = setInterval(()=>{ refresh('auto', { reconnectLive: false }) }, SYNC_MS)
+  }
+  updateSyncChrome()
+}
+
+function wireLiveStream(){
+  try{ if(liveEs){ liveEs.close() } }catch{}
+  liveEs = null
+  try{
+    // cache-bust EventSource URL so proxies don't glue a stale stream
+    liveEs = new EventSource(window.__showtimeApiUrl(`/api/events?_=${Date.now()}&nocache=1`))
+    liveEs.addEventListener('sessions', ev=>{
+      try{
+        sessions=JSON.parse(ev.data)||[]
+        markSynced('live', true)
+        render()
+      }catch{}
+    })
+    liveEs.addEventListener('handovers', ev=>{
+      try{
+        handovers=JSON.parse(ev.data)||[]
+        renderHandovers()
+      }catch{}
+    })
+    liveEs.addEventListener('handover', ev=>{
+      try{
+        const h=JSON.parse(ev.data)
+        if(!h||!h.id) return
+        const i=handovers.findIndex(x=>x.id===h.id)
+        if(i>=0) handovers[i]=h
+        else handovers.unshift(h)
+        handovers=handovers.slice(0,60)
+        renderHandovers()
+        if(h.status==='pending' || h.status==='delivered'){
+          toast('Handover', `${h.subAgentId||'SA-?'} · ${h.chatLabel||''} · ${hoWhen(h.at)}`)
+        }
+      }catch{}
+    })
+    liveEs.addEventListener('wiped', ()=>{
+      // lane removed after complete/stale — soft refresh sessions
+      refresh('live', { reconnectLive: false })
+    })
+    liveEs.addEventListener('needs_input', ()=>{ dockOpen=true; applyChrome() })
+    liveEs.onerror = ()=>{
+      // browser will retry EventSource; surface connection doubt
+      if(connOk !== false){ connOk = null; updateSyncChrome() }
+    }
+  }catch{}
+}
+
+/**
+ * refresh — connection-aware session pull.
+ * source: boot | auto | manual | live
+ * manual SYNC always reconnects the live stream + health-checks (browser cache escape hatch).
+ * Never wipe a good MAP with a black OFFLINE slab on a transient poll failure.
+ */
+async function refresh(source='manual', opts={}){
+  if(syncing) return
+  const force = source==='manual' || source==='boot' || opts.reconnectLive===true
+  const reconnectLive = opts.reconnectLive!==undefined ? opts.reconnectLive : force
+  syncing = true
+  updateSyncChrome()
+  try{
+    if(force){
+      try{
+        const health = await fetchLive('/api/health')
+        if(!health.ok) throw new Error('health '+health.status)
+      }catch(he){
+        // Still try sessions — health flake shouldn't blank the board
+        if(source==='manual') console.warn('health probe failed', he)
+      }
+    }
+    const res = await fetchLive('/api/sessions')
+    if(!res.ok) throw new Error('sessions '+res.status)
+    const j = await res.json()
+    sessions = j.sessions||[]
+    markSynced(source, true)
+    // SYNC / poll always keeps mission card on top of Pac with fresh fleet totals
+    if(source==='manual' || source==='boot') missionFloatOpen = true
+    if(reconnectLive) wireLiveStream()
+    // Handover folders: always refresh; boot/manual also retry undelivered flush
+    if(source==='boot' || source==='manual') await loadHandovers()
+    else {
+      try{
+        const hr=await fetchLive('/api/handovers')
+        if(hr.ok){ const hj=await hr.json(); handovers=hj.handovers||[] }
+      }catch{}
+    }
+    render()
+  }catch(err){
+    markSynced(source, false)
+    // Keep last-known sessions painted. Only show empty offline if we have nothing.
+    if(!sessions.length){
+      const empty = $('empty')
+      if(empty){
+        empty.style.display='block'
+        empty.classList.add('offline')
+        empty.dataset.offline = '1'
+        empty.innerHTML='<h2>OFFLINE</h2><p>Connection failed or browser served stale data — hit <b>SYNC</b> to force reconnect (or Shift+SYNC to hard-reload the board)</p>'
+      }
+    } else {
+      // Soft failure: keep lanes/list/claw; connection badge goes red via updateSyncChrome
+      renderMissionFloat()
+      updateSyncChrome()
+    }
+  }finally{
+    syncing = false
+    updateSyncChrome()
+  }
+}
+
+/* Chrome wiring */
+$('hide-left').onclick=()=>{ leftOpen=false; applyChrome() }
+$('hide-right').onclick=()=>{ rightOpen=false; applyChrome() }
+$('tab-left').onclick=()=>{ leftOpen=true; applyChrome() }
+$('tab-right').onclick=()=>{ rightOpen=true; applyChrome() }
+$('dock-toggle').onclick=(e)=>{ e.stopPropagation(); dockOpen=!dockOpen; applyChrome() }
+$('btn-list').onclick=()=>{ missionFloatOpen=true; viewMode='list'; applyViewMode() }
+$('btn-map').onclick=()=>{ missionFloatOpen=true; viewMode='map'; applyViewMode() }
+$('btn-claw').onclick=()=>{ missionFloatOpen=true; viewMode='claw'; applyViewMode() }
+$('mf-close')?.addEventListener('click', (e)=>{
+  e.stopPropagation()
+  // Hide for this tab only — next mode switch / SYNC brings it back
+  missionFloatOpen = false
+  renderMissionFloat()
+})
+// 1UP score click = always re-show mission on top
+$('score-1up')?.closest('.score')?.addEventListener('click', ()=>{
+  missionFloatOpen = true
+  renderMissionFloat()
+})
+// Mode tabs always force mission back on top of Pac/LIST/CLAW
+;['btn-list','btn-map','btn-claw'].forEach(id=>{
+  const b = $(id)
+  if(!b) return
+  const prev = b.onclick
+  b.addEventListener('click', ()=>{
+    missionFloatOpen = true
+    // applyViewMode already called by existing handlers
+    requestAnimationFrame(()=>renderMissionFloat())
+  })
+})
+$('btn-sync').onclick=(e)=>{
+  // Shift+click = nuclear: hard-reload board HTML (true browser cache wipe for the page)
+  if(e.shiftKey){
+    const u = new URL(location.href)
+    u.searchParams.set('_reload', String(Date.now()))
+    location.replace(u.toString())
+    return
+  }
+  refresh('manual', { reconnectLive: true })
+}
+$('sync-auto').onclick=()=>{
+  autoSync = !autoSync
+  localStorage.setItem('st-auto-sync', autoSync ? '1' : '0')
+  armAutoSync()
+}
+
+$('z-out').onclick=()=>{ scale=Math.max(0.2, +(scale-0.08).toFixed(2)); applyCanvas() }
+$('z-in').onclick=()=>{ scale=Math.min(2, +(scale+0.08).toFixed(2)); applyCanvas() }
+$('z-reset').onclick=()=>{ scale=0.85; panX=40; panY=40; applyCanvas() }
+$('z-fit').onclick=()=>fitAll()
+
+/* Dock resize — drag UP increases height */
+;(()=>{
+  const grip=$('dock-resizer')
+  let on=false, y0=0, h0=0
+  grip.addEventListener('pointerdown', e=>{
+    on=true; y0=e.clientY; h0=dockOpen?dockH:52
+    if(!dockOpen){ dockOpen=true; applyChrome() }
+    grip.setPointerCapture(e.pointerId)
+    e.preventDefault()
+  })
+  grip.addEventListener('pointermove', e=>{
+    if(!on) return
+    // drag up => positive growth
+    const dy = y0 - e.clientY
+    dockH = Math.max(140, Math.min(window.innerHeight*0.75, h0 + dy))
+    $('dock').style.height = dockH + 'px'
+  })
+  grip.addEventListener('pointerup', e=>{
+    if(!on) return
+    on=false
+    try{ grip.releasePointerCapture(e.pointerId) }catch{}
+    localStorage.setItem('st-dock-h', String(dockH))
+  })
+})()
+
+/* MAP + CLAW pan + wheel zoom (LIST is scroll-only; mission bar outside stage) */
+;(()=>{
+  const stage=$('board-stage') || $('board')
+  let drag=false, sx=0, sy=0, ox=0, oy=0
+  const canPan = ()=> viewMode==='map' || viewMode==='claw'
+  const clearSel = ()=>{
+    try{
+      const sel = window.getSelection && window.getSelection()
+      if(sel && sel.removeAllRanges) sel.removeAllRanges()
+    }catch{}
+  }
+  stage.addEventListener('pointerdown', e=>{
+    if(e.button!==0) return
+    // Never leave a sticky multi-node text highlight on board chrome
+    if(!e.target.closest('input,textarea,[contenteditable="true"]')) clearSel()
+    if(!canPan()) return
+    if(e.target.closest('.canvas-tools, button, a, input, textarea, .lane, .mission-bar, .mission-float, .claw-branch-card, .claw-node, .claw-head-card')) return
+    drag=true; sx=e.clientX; sy=e.clientY; ox=panX; oy=panY
+    stage.classList.add('panning')
+    $('claw-view')?.classList.add('panning')
+    stage.setPointerCapture(e.pointerId)
+    e.preventDefault() // blocks native drag-select while panning
+  })
+  stage.addEventListener('pointermove', e=>{
+    if(!drag) return
+    e.preventDefault()
+    clearSel()
+    panX = ox + (e.clientX - sx)
+    panY = oy + (e.clientY - sy)
+    applyCanvas()
+  })
+  stage.addEventListener('pointerup', e=>{
+    if(!drag) return
+    drag=false
+    stage.classList.remove('panning')
+    $('claw-view')?.classList.remove('panning')
+    try{ stage.releasePointerCapture(e.pointerId) }catch{}
+    clearSel()
+  })
+  stage.addEventListener('selectstart', e=>{
+    if(e.target.closest('input,textarea,[contenteditable="true"]')) return
+    e.preventDefault()
+  })
+  stage.addEventListener('dragstart', e=>{
+    if(e.target.closest('input,textarea')) return
+    e.preventDefault()
+  })
+  stage.addEventListener('wheel', e=>{
+    if(!canPan()) return
+    e.preventDefault()
+    const delta = e.deltaY > 0 ? -0.08 : 0.08
+    const prev=scale
+    scale = Math.max(0.2, Math.min(2, +(scale+delta).toFixed(2)))
+    const rect=stage.getBoundingClientRect()
+    const cx=e.clientX-rect.left, cy=e.clientY-rect.top
+    const ratio=scale/prev
+    panX = cx - (cx - panX) * ratio
+    panY = cy - (cy - panY) * ratio
+    applyCanvas()
+  }, {passive:false})
+  stage.addEventListener('dblclick', e=>{
+    if(!canPan()) return
+    if(e.target.closest('.lane, .canvas-tools, button, .claw-branch-card, .claw-node')) return
+    e.preventDefault()
+    clearSel()
+    scale=0.85; panX=40; panY=40; applyCanvas()
+  })
+  window.addEventListener('resize', ()=>{
+    if(viewMode==='claw') requestAnimationFrame(()=>drawClawStrings())
+  })
+})()
+
+applyChrome()
+applyCanvas()
+updateSyncChrome()
+missionFloatOpen = true
+renderMissionFloat()
+armMissionTick()
+$('ho-folder-btn')?.addEventListener('click', openHandoverModal)
+$('ho-modal-close')?.addEventListener('click', closeHandoverModal)
+$('ho-copy-all')?.addEventListener('click', async()=>{
+  const n=(handovers||[]).length
+  await copyText(formatAllHandovers(), n?`All ${n} notes copied`:'Nothing to copy')
+})
+$('ho-modal')?.addEventListener('click', e=>{ if(e.target===e.currentTarget) closeHandoverModal() })
+document.addEventListener('keydown', e=>{
+  if(e.key==='Escape' && hoModalOpen) closeHandoverModal()
+})
+// Boot: force connection + open live stream (not a soft paint)
+refresh('boot', { reconnectLive: true })
+armAutoSync()
+</script>
+</body>
+</html>
