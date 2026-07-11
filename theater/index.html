@@ -354,6 +354,26 @@ input,textarea,[contenteditable="true"]{
   font-size:9px;color:#fdba74;background:rgba(249,115,22,.1);border:1px solid rgba(249,115,22,.3);
   border-radius:6px;padding:3px 6px;margin-top:3px
 }
+/* Slice detail modal — every SC-xx row opens one on click */
+.slice-modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.6);z-index:200}
+.slice-modal.open{display:flex}
+.slice-modal .sm-card{width:min(440px,92vw);background:#0b1220;border:1px solid rgba(94,234,212,.35);
+  border-radius:12px;padding:14px 16px;box-shadow:0 12px 48px rgba(0,0,0,.6);font-size:12px}
+.slice-modal .sm-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.slice-modal .sm-id{font-family:ui-monospace,Consolas,monospace;font-weight:700;font-size:15px;color:var(--cyan)}
+.slice-modal .sm-chip{font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;text-transform:uppercase}
+.slice-modal .sm-chip.done{background:rgba(163,230,53,.15);color:var(--lime)}
+.slice-modal .sm-chip.run{background:rgba(94,234,212,.15);color:var(--cyan)}
+.slice-modal .sm-chip.hold{background:rgba(251,191,36,.15);color:var(--amber)}
+.slice-modal .sm-chip.pend{background:rgba(255,255,255,.08);color:var(--muted)}
+.slice-modal .sm-close{margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px}
+.slice-modal .sm-close:hover{color:var(--ink)}
+.slice-modal .sm-title{color:var(--ink);line-height:1.45;margin-bottom:8px;white-space:pre-wrap}
+.slice-modal .sm-reason{font-size:10px;color:#fdba74;background:rgba(249,115,22,.1);
+  border:1px solid rgba(249,115,22,.3);border-radius:6px;padding:4px 7px;margin-bottom:8px}
+.slice-modal .sm-meta{display:grid;gap:3px;font-size:10px;color:var(--muted)}
+.slice-modal .sm-meta b{color:var(--ink);font-weight:600;margin-right:4px}
 /* Pixel invader claw (ref: coral block alien) — legs march when working */
 .claw-icon{
   width:28px;height:28px;flex:none;position:relative;
@@ -368,10 +388,10 @@ input,textarea,[contenteditable="true"]{
 .claw-icon.still{opacity:.72;filter:grayscale(.3) drop-shadow(0 0 2px rgba(224,122,95,.25))}
 @keyframes inv-leg-l{0%,100%{transform:translateY(0)}50%{transform:translateY(1px)}}
 @keyframes inv-leg-r{0%,100%{transform:translateY(1px)}50%{transform:translateY(0)}}
-/* SC-04: active worker's bug walks its slice's BORDER clockwise — a big clock-hand
-   sweep of the card edge (top → right → bottom → left → back), amplitude = the card
-   itself, NOT an in-place wobble. Icon goes absolute so it traces the real node box;
-   legs keep marching on the inner <g> (independent element). Workers only. */
+/* SC-04 (corrected): the working bug orbits ITS OWN SLICE ROW — the tiny SC-xx box —
+   clockwise (top → right → bottom → left), legs marching. The orbit is scoped to
+   .claw-node ONLY: the card-header status crab must never orbit (absolute there
+   resolves against the whole card = crab lapping the card outside — the bug). */
 @keyframes claw-orbit{
   0%{left:2px;top:2px}                                    /* top-left corner */
   25%{left:calc(100% - 30px);top:2px}                     /* → top-right */
@@ -379,7 +399,9 @@ input,textarea,[contenteditable="true"]{
   75%{left:2px;top:calc(100% - 30px)}                     /* → bottom-left */
   100%{left:2px;top:2px}                                  /* → back to start */
 }
-.claw-icon.orbiting{position:absolute;z-index:2;margin:0;animation:claw-orbit 3.4s linear infinite}
+.claw-node .claw-icon.orbiting{position:absolute;z-index:2;margin:0;animation:claw-orbit 3.4s linear infinite}
+/* outside a slice row the orbiting class is inert — belt & braces */
+.claw-icon.orbiting{position:relative}
 .claw-node .claw-icon{margin-top:1px}
 .claw-orch{
   image-rendering:pixelated;image-rendering:crisp-edges
@@ -2000,10 +2022,12 @@ function invaderPixelSvg(unit=2, label=''){
   </svg>`
 }
 
-function clawSvg(running){
-  // SC-04: working bug marches its legs AND orbits its slice clockwise
-  const runCls = running ? 'running orbiting' : 'still'
-  return `<div class="claw-icon ${runCls}" title="${running?'working — orbiting its slice, legs marching':'not working — legs still'}">
+function clawSvg(running, orbit=false){
+  // Legs march when working. ONLY the slice-row crab passes orbit=true — it circles
+  // its own SC-xx row. The card-header status crab stays put (orbit there = laps
+  // around the whole card, the exact bug the operator kept seeing).
+  const runCls = running ? (orbit ? 'running orbiting' : 'running') : 'still'
+  return `<div class="claw-icon ${runCls}" title="${running?(orbit?'working — circling its slice, legs marching':'working — legs marching'):'not working — legs still'}">
     ${invaderPixelSvg(2)}
   </div>`
 }
@@ -2012,6 +2036,38 @@ function orchSvg(state){
   return `<div class="claw-orch ${state}" title="ORCH — fleet head">
     ${invaderPixelSvg(3, 'ORCH')}
   </div>`
+}
+
+/** Click any SC-xx row → everything known about that slice, full text, no ellipsis. */
+function showSliceModal(s, t){
+  let m=document.getElementById('slice-modal')
+  if(!m){
+    m=document.createElement('div'); m.id='slice-modal'; m.className='slice-modal'
+    m.addEventListener('click',e=>{ if(e.target===m||e.target.closest('.sm-close')) m.classList.remove('open') })
+    window.addEventListener('keydown',e=>{ if(e.key==='Escape') m.classList.remove('open') })
+    document.body.appendChild(m)
+  }
+  const todos=s?.todo||[]
+  const idx=todos.findIndex(x=>x.id===t.id)
+  const st=(t.state||'pending').toLowerCase()
+  const chip = st==='done'?'done':st==='in-progress'?'run':(st==='blocked'||st==='standby')?'hold':'pend'
+  const reason = t.reason||t.note||((st==='blocked'||st==='standby')?(s?.stopReason||'awaiting operator / dependency'):'')
+  m.innerHTML=`<div class="sm-card" role="dialog" aria-label="slice detail">
+    <div class="sm-head">
+      <span class="sm-id">${esc(t.id||'?')}</span>
+      <span class="sm-chip ${chip}">${esc(sliceStateLabel(t))}</span>
+      <button class="sm-close" title="close">✕</button>
+    </div>
+    <div class="sm-title">${esc(t.text||'(no title)')}</div>
+    ${reason?`<div class="sm-reason">⏸ ${esc(reason)}</div>`:''}
+    <div class="sm-meta">
+      ${s?`<div><b>Lane</b> ${esc(saBadge(s))} · Chat ${subAgentNo(s)} · ${esc(s.repoId||'')}</div>
+      <div><b>Branch</b> ${esc(s.branch||'—')} · ${esc((s.sessionId||'').slice(0,12))}</div>
+      <div><b>Ledger</b> ${esc(s.ledgerPath||'—')}</div>`:''}
+      ${idx>=0?`<div><b>Position</b> slice ${idx+1} of ${todos.length}</div>`:''}
+    </div>
+  </div>`
+  m.classList.add('open')
 }
 
 function sessionWorkState(s){
@@ -2099,8 +2155,8 @@ function renderClaw(){
       let holdNote=''
       if(nhold || (ws==='hold' && nrun)) holdNote=`<div class="claw-hold-note">holding — ${esc(s.stopReason||'awaiting operator / dependency')}</div>`
       if(ws==='hold' && st==='pending' && oq(s).length) holdNote=`<div class="claw-hold-note">ORCH hold — ${esc(saBadge(s))} question open</div>`
-      return `<div class="claw-node ${cls}" data-sid="${s.sessionId}">
-        ${clawSvg(legs)}
+      return `<div class="claw-node ${cls}" data-sid="${s.sessionId}" data-slice="${esc(t.id||'')}" title="${esc(t.id||'')} — click for details">
+        ${clawSvg(legs, true)}
         <div class="nt">
           <div class="nid">${esc(t.id||'')}</div>
           <div class="nx">${esc(t.text||'')}</div>
@@ -2148,7 +2204,16 @@ function renderClaw(){
     ${head}
     <div class="claw-branches" id="claw-branches">${branches}</div>
   </div>`
-  stage.querySelectorAll('.claw-node,[data-sid]').forEach(el=>{
+  // Every SC-xx slice row is clickable → its own detail modal (never hijacked by the lane pane)
+  stage.querySelectorAll('.claw-node').forEach(el=>{
+    el.addEventListener('click',e=>{
+      e.stopPropagation()
+      const s=sessions.find(x=>x.sessionId===el.dataset.sid)
+      const t=(s?.todo||[]).find(x=>x.id===el.dataset.slice)
+      showSliceModal(s, t||{id:el.dataset.slice||'?',text:'',state:''})
+    })
+  })
+  stage.querySelectorAll('[data-sid]:not(.claw-node)').forEach(el=>{
     el.addEventListener('click',e=>{
       if(e.target.closest('.mf-lane-close')) return
       const sid=el.dataset.sid||el.closest('[data-sid]')?.dataset?.sid

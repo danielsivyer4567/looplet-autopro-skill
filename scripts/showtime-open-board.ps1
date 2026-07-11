@@ -144,12 +144,42 @@ function Open-ExtensionBoard([string]$extId, [string]$boardUrl) {
   return $false
 }
 
+function Get-ChromePath {
+  foreach ($c in @(
+      "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
+      "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+      "${env:LOCALAPPDATA}\Google\Chrome\Application\chrome.exe"
+    )) {
+    if (Test-Path -LiteralPath $c) { return $c }
+  }
+  try {
+    $rk = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe' -ErrorAction Stop
+    $p = $rk.'(default)'
+    if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+  } catch {}
+  return $null
+}
+
 function Open-BoardInBrowser([string]$url) {
-  # Hard guarantee: open the localhost board in the default browser.
-  # Companion / extension hooks are additive and must NOT suppress this.
+  # Hard guarantee: open the localhost board — GOOGLE CHROME first (operator call
+  # 2026-07-12: never Edge unless Chrome is missing), then default assoc fallbacks.
   # Note: do not mix Write-Output with return $bool under assignment — that
   # swallows status lines. Use $script:BoardPageOpened instead.
   $script:BoardPageOpened = $false
+  $chrome = Get-ChromePath
+  if ($chrome) {
+    try {
+      Start-Process -FilePath $chrome -ArgumentList @($url) -ErrorAction Stop
+      $script:BoardPageOpened = $true
+      Write-Output "OPENED_PAGE_VIA=$chrome"
+      Write-Output "OPENED_PAGE=$url"
+      return
+    } catch {
+      Write-Output "OPEN_CHROME_WARN=$($_.Exception.Message)"
+    }
+  } else {
+    Write-Output 'OPEN_CHROME_WARN=chrome.exe not found — falling back to default browser'
+  }
   try {
     Start-Process $url -ErrorAction Stop
     $script:BoardPageOpened = $true

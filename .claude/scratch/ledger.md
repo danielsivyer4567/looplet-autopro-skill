@@ -167,7 +167,7 @@ Notes: pending already derivable; standby+reason is the new label. If the
   gains a standby bucket; session total denominator now includes standby (remaining
   work). Verified live on isolated :8793 via playwright: CLAW shows "pending",
   "standby — conflicting paths", "standby — (no reason given)"; 0 console errors.
-Commit: 9869183
+Commit: d805439
 
 ## SC-07 — ORCH previous-notes log + click-to-open  [pending]
 DONE (machine): ORCH card shows a "Previous notes" affordance with a count;
