@@ -152,7 +152,9 @@ function Test-CompanionOpen([string]$boardUrl) {
 }
 
 function Open-ExtensionBoard([string]$extId, [string]$boardUrl) {
-  # chrome-extension:// URLs must be launched through Chrome, never via shell association.
+  # NEVER Start-Process chrome-extension:// alone — Windows shows
+  # "Get an app to open this chrome-extension link" (Microsoft Store).
+  # Only open via chrome.exe with the profile that has Looplet loaded.
   $chrome = Get-ChromePath
   if (-not $chrome) {
     Write-Output 'EXTENSION_OPEN_SKIP=no chrome.exe (board page is enough)'
@@ -161,23 +163,16 @@ function Open-ExtensionBoard([string]$extId, [string]$boardUrl) {
   $profile = 'Profile 5'
   $cfg = Get-ConfigExt
   if ($cfg -and $cfg.profile) { $profile = [string]$cfg.profile }
-  $candidates = @(
-    "chrome-extension://$extId/sidebar/sidebar.html?view=board&showtime=$([uri]::EscapeDataString($boardUrl))",
-    "chrome-extension://$extId/sidebar/sidebar.html#board?showtime=$([uri]::EscapeDataString($boardUrl))",
-    "chrome-extension://$extId/newtab/newtab.html?board=$([uri]::EscapeDataString($boardUrl))",
-    "chrome-extension://$extId/options/options.html?showtime=$([uri]::EscapeDataString($boardUrl))"
-  )
-  foreach ($u in $candidates) {
-    try {
-      Start-Process -FilePath $chrome -ArgumentList @("--profile-directory=$profile", $u) -ErrorAction Stop
-      Write-Output "OPENED_EXTENSION_VIA=$chrome profile=$profile"
-      Write-Output "OPENED_EXTENSION=$u"
-      return $true
-    } catch {
-      Write-Output "EXTENSION_OPEN_WARN=$($_.Exception.Message)"
-    }
+  $u = "chrome-extension://$extId/sidebar/sidebar.html?view=board&showtime=$([uri]::EscapeDataString($boardUrl))"
+  try {
+    Start-Process -FilePath $chrome -ArgumentList @("--profile-directory=$profile", $u) -ErrorAction Stop
+    Write-Output "OPENED_EXTENSION_VIA=$chrome profile=$profile"
+    Write-Output "OPENED_EXTENSION=$u"
+    return $true
+  } catch {
+    Write-Output "EXTENSION_OPEN_WARN=$($_.Exception.Message)"
+    return $false
   }
-  return $false
 }
 
 function Get-ChromePath {
@@ -196,18 +191,36 @@ function Get-ChromePath {
   return $null
 }
 
+function Normalize-BoardUrl([string]$url) {
+  # Tailscale + MagicDNS: localhost often resolves to ::1, but theater binds
+  # 127.0.0.1 only → health hangs and the board looks "offline". Always force IPv4.
+  if (-not $url) { return 'http://127.0.0.1:8770/' }
+  try {
+    $u = [uri]$url
+    if ($u.Host -eq 'localhost' -or $u.Host -eq '::1') {
+      $port = if ($u.IsDefaultPort) { 8770 } else { $u.Port }
+      return "http://127.0.0.1:$port$($u.PathAndQuery)"
+    }
+  } catch {}
+  return $url
+}
+
 function Open-BoardInBrowser([string]$url) {
-  # Hard guarantee: open the localhost board — GOOGLE CHROME first (operator call
-  # 2026-07-12: never Edge unless Chrome is missing), then default assoc fallbacks.
+  # Hard guarantee: open 127.0.0.1 board — GOOGLE CHROME Profile 5 first (Looplet
+  # lives there). Use the system default browser only when Chrome is absent.
   # Note: do not mix Write-Output with return $bool under assignment — that
   # swallows status lines. Use $script:BoardPageOpened instead.
+  $url = Normalize-BoardUrl $url
   $script:BoardPageOpened = $false
   $chrome = Get-ChromePath
+  $profile = 'Profile 5'
+  $cfg = Get-ConfigExt
+  if ($cfg -and $cfg.profile) { $profile = [string]$cfg.profile }
   if ($chrome) {
     try {
-      Start-Process -FilePath $chrome -ArgumentList @($url) -ErrorAction Stop
+      Start-Process -FilePath $chrome -ArgumentList @("--profile-directory=$profile", $url) -ErrorAction Stop
       $script:BoardPageOpened = $true
-      Write-Output "OPENED_PAGE_VIA=$chrome"
+      Write-Output "OPENED_PAGE_VIA=$chrome profile=$profile"
       Write-Output "OPENED_PAGE=$url"
       return
     } catch {
@@ -245,6 +258,7 @@ function Open-BoardInBrowser([string]$url) {
 }
 
 # --- main ---
+$BoardUrl = Normalize-BoardUrl $BoardUrl
 if ($NoBrowser) {
   Write-Handoff 'none' $BoardUrl
   Write-Output 'OPEN_MODE=none'

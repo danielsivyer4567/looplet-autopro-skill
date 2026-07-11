@@ -209,14 +209,32 @@ function Invoke-ShowTime {
   if ($HandoverText) { $body.handoverText = $HandoverText }
 
   if ($Action -eq 'register') {
+    if (-not $SessionId) { throw 'SessionId required for Show Time register (join gate)' }
     $body.sessionId = $SessionId
-    $body.repoId = [IO.Path]::GetFileName($WorkDir.TrimEnd('\', '/'))
+    # Real repo name from primary RepoDir — never worktree sess_* leaf
+    $repoName = [IO.Path]::GetFileName($RepoDir.TrimEnd('\', '/'))
+    if ($repoName -match '^sess_' -or $repoName -eq 'repo' -or -not $repoName) {
+      $parent = Split-Path $RepoDir -Parent
+      if ($parent) { $repoName = [IO.Path]::GetFileName($parent.TrimEnd('\', '/')) }
+    }
+    if ($WorkDir -match '(?i)[\\/]\.worktrees-showtime[\\/]') {
+      $primary = ($WorkDir -replace '(?i)[\\/]\.worktrees-showtime[\\/].*$', '')
+      $rn = [IO.Path]::GetFileName($primary.TrimEnd('\', '/'))
+      if ($rn) { $repoName = $rn }
+    }
+    if (-not $repoName -or $repoName -eq 'repo' -or $repoName -match '^sess_') {
+      throw "repo name required for register (got '$repoName')"
+    }
+    $body.repoId = $repoName
     $body.repoPath = $WorkDir
     try {
       Push-Location $WorkDir
       $body.branch = ("$(git rev-parse --abbrev-ref HEAD 2>$null)").Trim()
     } catch { $body.branch = '' }
     finally { Pop-Location }
+    if (-not $body.branch -or $body.branch -eq 'HEAD') {
+      throw 'branch required for Show Time register (join gate)'
+    }
     $null = Invoke-ShowTimeApi -Method POST -Path '/api/sessions' -Body $body
     return
   }
@@ -608,6 +626,18 @@ function Invoke-Slice($prompt) {
             if (-not (Test-Path -LiteralPath $portFile)) { continue }
             $port = (Get-Content -LiteralPath $portFile -Raw).Trim()
             $tok = if (Test-Path -LiteralPath $tokFile) { (Get-Content -LiteralPath $tokFile -Raw).Trim() } else { '' }
+            $headers = @{ Authorization = "Bearer $tok"; 'X-Showtime-Token' = $tok; 'Content-Type' = 'application/json' }
+            # Consume steers / ORCH NUDGE mid-slice so reconnect pings land while model runs
+            $nudgeAck = $false
+            try {
+              $cs = Invoke-RestMethod -Method POST -Uri "http://127.0.0.1:$port/api/sessions/$SessionId/consume-steers" -Headers $headers -Body '{}' -TimeoutSec 5
+              foreach ($st in @($cs.steers)) {
+                $t = [string]$st.text
+                $k = [string]$st.kind
+                if ($k -eq 'nudge' -or $t -match 'ORCH NUDGE') { $nudgeAck = $true }
+              }
+            } catch {}
+            $sentText = if ($nudgeAck) { 'nudge ack · reconnected' } else { 'slice keep-alive (model still running)' }
             $body = @{
               status      = 'running'
               progress    = $true
@@ -617,9 +647,8 @@ function Invoke-Slice($prompt) {
               ledgerTitle = $LedgerTitle
               handoverPath = $HandoverPath
               logPath     = $LogPath
-              sentinelEntry = @{ text = 'slice keep-alive (model still running)'; level = 'info' }
+              sentinelEntry = @{ text = $sentText; level = 'info' }
             } | ConvertTo-Json -Compress -Depth 6
-            $headers = @{ Authorization = "Bearer $tok"; 'X-Showtime-Token' = $tok; 'Content-Type' = 'application/json' }
             Invoke-RestMethod -Method POST -Uri "http://127.0.0.1:$port/api/sessions/$SessionId/heartbeat" -Headers $headers -Body $body -TimeoutSec 5 | Out-Null
           } catch {}
         }

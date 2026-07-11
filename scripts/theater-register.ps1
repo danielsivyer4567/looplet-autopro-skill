@@ -55,14 +55,30 @@ function Start-ShowTimeServer {
   $node = Get-Command node -ErrorAction SilentlyContinue
   if (-not $node) { throw 'node is required for Show Time server' }
 
-  # Detach fully from parent job (UseShellExecute) so agent shells don't kill the board.
-  $psi = New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName = $node.Source
-  $psi.Arguments = "`"$ServerJs`""
-  $psi.WorkingDirectory = $SkillRoot
-  $psi.UseShellExecute = $true
-  $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-  [void][System.Diagnostics.Process]::Start($psi)
+  # Detach so agent shells / job objects don't kill the board when the parent exits.
+  # Prefer CreateNoWindow + Redirect so we don't rely on UseShellExecute alone
+  # (that path was leaving dead server.pid files and a "offline" home card).
+  $outLog = Join-Path $StateRoot 'server.out.log'
+  $errLog = Join-Path $StateRoot 'server.err.log'
+  try {
+    $p = Start-Process -FilePath $node.Source `
+      -ArgumentList @($ServerJs) `
+      -WorkingDirectory $SkillRoot `
+      -WindowStyle Hidden `
+      -RedirectStandardOutput $outLog `
+      -RedirectStandardError $errLog `
+      -PassThru
+    if ($p) { Write-Output "SHOWTIME_PID=$($p.Id)" }
+  } catch {
+    # Fallback: shell-execute detach
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $node.Source
+    $psi.Arguments = "`"$ServerJs`""
+    $psi.WorkingDirectory = $SkillRoot
+    $psi.UseShellExecute = $true
+    $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    [void][System.Diagnostics.Process]::Start($psi)
+  }
 
   for ($i = 0; $i -lt 50; $i++) {
     Start-Sleep -Milliseconds 200
@@ -106,9 +122,18 @@ function Get-GitBranch([string]$dir) {
 }
 
 function Get-RepoIdFromPath([string]$dir) {
-  if ($RepoId) { return $RepoId }
-  if (-not $dir) { return 'repo' }
-  return [IO.Path]::GetFileName($dir.TrimEnd('\', '/'))
+  if ($RepoId -and $RepoId -ne 'repo' -and $RepoId -notmatch '^sess_') { return $RepoId }
+  if (-not $dir) { return '' }
+  $p = $dir.TrimEnd('\', '/')
+  # Worktree: …\<repo>\.worktrees-showtime\<sess_*> → real repo folder name
+  if ($p -match '(?i)[\\/]\.worktrees-showtime[\\/]') {
+    $parent = ($p -replace '(?i)[\\/]\.worktrees-showtime[\\/].*$', '')
+    $name = [IO.Path]::GetFileName($parent.TrimEnd('\', '/'))
+    if ($name -and $name -ne 'repo' -and $name -notmatch '^sess_') { return $name }
+  }
+  $leaf = [IO.Path]::GetFileName($p)
+  if ($leaf -match '^sess_' -or $leaf -eq 'repo' -or -not $leaf) { return '' }
+  return $leaf
 }
 
 # Operator call 2026-07-12: board opens in GOOGLE CHROME first, default browser only if absent
@@ -141,7 +166,7 @@ switch ($Action) {
     break
   }
   'register' {
-    if (-not $SessionId) { $SessionId = 'sess_' + [guid]::NewGuid().ToString('N').Substring(0, 12) }
+    if (-not $SessionId) { throw 'SessionId required for register (join gate)' }
     $u = Start-ShowTimeServer
     if (-not $LedgerPath -and $RepoDir) {
       $LedgerPath = Join-Path $RepoDir '.claude\scratch\ledger.md'
@@ -150,9 +175,13 @@ switch ($Action) {
       $LogPath = Join-Path $Root '.claude\scratch\autopro.log'
     }
     if (-not $Branch) { $Branch = Get-GitBranch $RepoDir }
+    if (-not $Branch) { $Branch = Get-GitBranch (Split-Path $RepoDir -Parent) }
+    $resolvedRepo = Get-RepoIdFromPath $RepoDir
+    if (-not $resolvedRepo) { throw 'repo name required for register (real folder, not sess id / worktree leaf)' }
+    if (-not $Branch) { throw 'branch required for register (join gate)' }
     $body = @{
       sessionId   = $SessionId
-      repoId      = (Get-RepoIdFromPath $RepoDir)
+      repoId      = $resolvedRepo
       repoPath    = $RepoDir
       branch      = $Branch
       status      = $Status

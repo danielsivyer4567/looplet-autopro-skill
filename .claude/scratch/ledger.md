@@ -169,7 +169,7 @@ Notes: pending already derivable; standby+reason is the new label. If the
   "standby — conflicting paths", "standby — (no reason given)"; 0 console errors.
 Commit: d805439
 
-## SC-07 — ORCH previous-notes log + click-to-open  [pending]
+## SC-07 — ORCH previous-notes log + click-to-open  [in-progress]
 DONE (machine): ORCH card shows a "Previous notes" affordance with a count;
   clicking opens the existing handover/notes modal populated from session
   notes[]; GET path returns notes; no JS error.
@@ -258,7 +258,7 @@ Commit: —
 > and NOT part of the display pass. Do NOT start these under the same arm
 > without an explicit go.
 
-## SC-12 — Conflict detection: two SAs touching the same paths  [pending]
+## SC-12 — Conflict detection: two SAs touching the same paths  [gated]
 DONE (machine): server computes overlap between sessions' changed-file sets (or
   worktree branch bases) and marks a conflict flag; unit test on the overlap fn.
 DONE (human): "conflicting chats / working over each other" surfaces truthfully.
@@ -267,7 +267,7 @@ Notes: ⑦. Needs a real signal (git diff --name-only per worktree, or slice pat
   claims). Design first. GATED.
 Commit: —
 
-## SC-13 — Drift resolution + "waiting on user decision" clarity  [pending]
+## SC-13 — Drift resolution + "waiting on user decision" clarity  [gated]
 DONE (machine): a session blocked specifically on a user decision is labeled
   distinctly from a stall; a resolution affordance is shown.
 DONE (human): operator can tell "waiting on ME" vs "stuck", and act. ⑦.

@@ -280,6 +280,7 @@ function pushSentinel(session, text, level = 'info') {
 }
 function enrich(session) {
   session = applyStall({ ...session })
+  session = applyNudgeExpiry(session)
   session.openQuestions = openQuestionCount(session)
   session.needsInput = session.openQuestions > 0 || session.status === 'needs_input'
   // Fleet model: operator talks only to ORCH; each lane is a numbered sub-agent (SA-N ≡ Chat N)
@@ -296,18 +297,62 @@ function enrich(session) {
 }
 
 // Derive a clean repo folder name from repoPath; fall back to repoId. Pure.
-function repoNameOf(session) {
-  const p = (session && session.repoPath || '').replace(/[\\/]+$/, '')
-  if (p) {
-    const base = p.split(/[\\/]/).pop()
-    if (base) return base
+// Walks past showtime worktree leaves (…/.worktrees-showtime/sess_*) to the real repo folder.
+function repoNameFromPath(repoPath) {
+  let p = String(repoPath || '').replace(/[\\/]+$/, '')
+  if (!p) return ''
+  const parts = p.split(/[\\/]/).filter(Boolean)
+  if (!parts.length) return ''
+  // …/<repo>/.worktrees-showtime/<sess_*>  → <repo>
+  const wtIdx = parts.findIndex((x) => /^\.worktrees-showtime$/i.test(x))
+  if (wtIdx > 0) return parts[wtIdx - 1]
+  const leaf = parts[parts.length - 1]
+  // bare sess leaf without worktree marker — not a real repo name
+  if (/^sess_[a-zA-Z0-9]+$/i.test(leaf)) {
+    if (parts.length >= 2) return parts[parts.length - 2]
+    return ''
   }
-  return (session && session.repoId) || ''
+  return leaf
+}
+
+function repoNameOf(session) {
+  const fromPath = repoNameFromPath(session && session.repoPath)
+  if (fromPath && !/^sess_/i.test(fromPath) && fromPath !== 'repo') return fromPath
+  const id = (session && session.repoId) || ''
+  if (id && id !== 'repo' && !/^sess_/i.test(id)) return id
+  return fromPath || id || ''
+}
+
+/** Hard join gate: board lanes need sessionId + real repo name + branch. */
+function assertJoinIdentity(body, existing) {
+  const sessionId = String(body.sessionId || existing?.sessionId || '').trim()
+  const branch = String(body.branch || existing?.branch || '').trim()
+  const repoPath = String(body.repoPath || existing?.repoPath || '').trim()
+  let repoId = String(body.repoId || existing?.repoId || '').trim()
+  const derived = repoNameFromPath(repoPath)
+  if (!repoId || repoId === 'repo' || /^sess_/i.test(repoId)) {
+    if (derived) repoId = derived
+  }
+  const errors = []
+  if (!sessionId || sessionId.length < 4) errors.push('sessionId required')
+  if (!repoId || repoId === 'repo' || /^sess_/i.test(repoId)) {
+    errors.push('repo name required (real folder, not sess id)')
+  }
+  if (!branch || branch === 'HEAD') errors.push('branch required')
+  if (errors.length) {
+    const err = new Error(errors.join('; '))
+    err.statusCode = 400
+    err.code = 'JOIN_IDENTITY'
+    throw err
+  }
+  return { sessionId, repoId, branch, repoPath }
 }
 
 function registerSession(body) {
-  const sessionId = body.sessionId || uid('sess')
-  const existing = readJsonSafe(sessionPath(sessionId))
+  const existingPreview = body.sessionId ? readJsonSafe(sessionPath(String(body.sessionId).trim())) : null
+  const ident = assertJoinIdentity(body, existingPreview)
+  const sessionId = ident.sessionId
+  const existing = existingPreview || readJsonSafe(sessionPath(sessionId))
   const ledgerPath = body.ledgerPath || existing?.ledgerPath || null
   let todos = body.todo
   if ((!todos || !todos.length) && ledgerPath) todos = parseLedgerTodos(ledgerPath)
@@ -327,9 +372,9 @@ function registerSession(body) {
     subAgentNo: lane,
     subAgentId: `SA-${lane}`,
     role: 'subagent',
-    repoId: body.repoId || existing?.repoId || 'repo',
-    repoPath: body.repoPath || existing?.repoPath || '',
-    branch: body.branch || existing?.branch || '',
+    repoId: ident.repoId,
+    repoPath: ident.repoPath || body.repoPath || existing?.repoPath || '',
+    branch: ident.branch,
     pid: body.pid ?? existing?.pid ?? null,
     ledgerHash: body.ledgerHash || existing?.ledgerHash || null,
     ledgerTitle: body.ledgerTitle || existing?.ledgerTitle || null,
@@ -408,8 +453,12 @@ function heartbeatSession(sessionId, body = {}) {
   if (body.status) existing.status = body.status
   if (body.stopReason !== undefined) existing.stopReason = body.stopReason
   if (body.pid != null) existing.pid = body.pid
-  if (body.branch) existing.branch = body.branch
-  if (body.repoPath) existing.repoPath = body.repoPath
+  // Never wipe join identity with empty patches
+  if (body.branch && String(body.branch).trim()) existing.branch = String(body.branch).trim()
+  if (body.repoPath && String(body.repoPath).trim()) existing.repoPath = String(body.repoPath).trim()
+  if (body.repoId && String(body.repoId).trim() && body.repoId !== 'repo' && !/^sess_/i.test(body.repoId)) {
+    existing.repoId = String(body.repoId).trim()
+  }
   if (body.ledgerHash) existing.ledgerHash = body.ledgerHash
   if (body.ledgerTitle) existing.ledgerTitle = body.ledgerTitle
   if (body.handoverPath) existing.handoverPath = body.handoverPath
@@ -431,6 +480,13 @@ function heartbeatSession(sessionId, body = {}) {
     if (['stalled', 'paused'].includes(existing.status) && body.status !== 'paused') {
       existing.status = body.status || 'running'
       if (existing.status === 'running') existing.stopReason = null
+    }
+    // Nudge listen window: any live progress acks reconnect
+    if (existing.nudge && existing.nudge.status === 'listening') {
+      existing.nudge.status = 'acked'
+      existing.nudge.ackedAt = nowIso()
+      existing.escalate = null
+      pushSentinel(existing, 'Nudge acked — connection re-established', 'info')
     }
   }
   if (body.timer) existing.timer = { ...existing.timer, ...body.timer }
@@ -797,6 +853,7 @@ function addSteer(sessionId, body) {
     id: uid('s'),
     target: body.target || body.sliceId || s.slice?.id || null,
     text: String(body.text || '').trim(),
+    kind: body.kind || null,
     at: nowIso(),
     consumed: false,
   }
@@ -819,6 +876,106 @@ function addSteer(sessionId, body) {
   writeJson(sessionPath(sessionId), s)
   broadcast('sessions', listSessions().map(enrich))
   return enrich(s)
+}
+
+/** Operator reconnect ping: 30s listen window + durable steer for runner. */
+function addNudge(sessionId, body = {}) {
+  const s = readJsonSafe(sessionPath(sessionId))
+  if (!s) return null
+  const listenSec = Math.max(5, Math.min(120, Number(body.listenSec) || 30))
+  const at = nowIso()
+  const listenUntil = new Date(Date.now() + listenSec * 1000).toISOString()
+  const alive = isPidAlive(s.pid)
+  const canNudge = alive
+
+  s.nudge = {
+    id: uid('nudge'),
+    at,
+    listenUntil,
+    status: 'listening',
+    reason: 'reconnect',
+    canNudge,
+    listenSec,
+  }
+
+  // Durable signal for runner (same consume-steers path)
+  const steer = {
+    id: uid('s'),
+    target: s.slice?.id || 'reconnect',
+    text:
+      'ORCH NUDGE: operator requested reconnect / re-establish. Heartbeat now, clear stall if working, resume slice loop.',
+    kind: 'nudge',
+    at,
+    consumed: false,
+  }
+  s.steers = s.steers || []
+  s.steers.unshift(steer)
+  const steerFile = path.join(STEER_DIR, `${sessionId}.jsonl`)
+  fs.appendFileSync(steerFile, JSON.stringify(steer) + '\n', 'utf8')
+
+  s.notes = s.notes || []
+  s.notes.unshift({
+    id: uid('n'),
+    text: `NUDGE · reconnect requested (${listenSec}s listen)`,
+    from: 'operator',
+    at,
+  })
+
+  if (s.status === 'stalled' && alive) {
+    s.status = 'running'
+    s.stopReason = null
+    s.timer = { ...(s.timer || {}), running: true, lastProgressAt: at }
+  }
+
+  if (!canNudge) {
+    s.escalate = {
+      reason: 'cant_nudge',
+      sessionId,
+      subAgentId: s.subAgentId || `SA-${s.lane}`,
+      lane: s.lane,
+      at,
+      detail: s.pid ? 'runner pid dead' : 'no runner pid',
+    }
+    pushSentinel(
+      s,
+      `NUDGE · cannot reconnect ${s.subAgentId || 'SA'} (${s.escalate.detail}) — ORCH CLICK HERE`,
+      'warn',
+    )
+  } else {
+    s.escalate = null
+    pushSentinel(s, `NUDGE · reconnect requested (${listenSec}s listen)`, 'info')
+  }
+
+  s.updatedAt = at
+  writeJson(sessionPath(sessionId), s)
+  const enriched = enrich(s)
+  broadcast('sessions', listSessions().map(enrich))
+  broadcast('nudge', enriched)
+  return enriched
+}
+
+/** Expire listen windows; escalate when reconnect never acked. */
+function applyNudgeExpiry(session) {
+  if (!session?.nudge || session.nudge.status !== 'listening') return session
+  const until = session.nudge.listenUntil
+  if (!until) return session
+  if (Date.now() < new Date(until).getTime()) return session
+  session.nudge.status = 'expired'
+  const stagnant =
+    session.status === 'stalled' ||
+    session.status === 'blocked' ||
+    !isPidAlive(session.pid)
+  if (stagnant || session.nudge.canNudge === false) {
+    session.escalate = {
+      reason: 'cant_nudge',
+      sessionId: session.sessionId,
+      subAgentId: session.subAgentId || `SA-${session.lane}`,
+      lane: session.lane,
+      at: nowIso(),
+      detail: 'nudge listen expired without ack',
+    }
+  }
+  return session
 }
 
 function consumeSteers(sessionId) {
@@ -899,12 +1056,19 @@ async function handleApi(req, res, url) {
       const body = await readBody(req)
       return send(res, 200, { ok: true, session: registerSession(body) })
     } catch (e) {
-      return send(res, 400, { ok: false, error: String(e.message || e) })
+      const code = e.code || (e.statusCode === 400 ? 'JOIN_IDENTITY' : 'ERROR')
+      return send(res, e.statusCode || 400, {
+        ok: false,
+        code,
+        error: String(e.message || e),
+      })
     }
   }
 
   // /api/sessions/:id/...
-  const m = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(heartbeat|notes|questions|steers|consume-steers|unregister))?$/)
+  const m = url.pathname.match(
+    /^\/api\/sessions\/([^/]+)(?:\/(heartbeat|notes|questions|steers|consume-steers|nudge|unregister))?$/,
+  )
   if (m) {
     const id = decodeURIComponent(m[1])
     const op = m[2] || ''
@@ -973,6 +1137,16 @@ async function handleApi(req, res, url) {
     }
     if (req.method === 'POST' && op === 'consume-steers') {
       return send(res, 200, { ok: true, ...consumeSteers(id) })
+    }
+    if (req.method === 'POST' && op === 'nudge') {
+      try {
+        const body = await readBody(req)
+        const session = addNudge(id, body)
+        if (!session) return send(res, 404, { ok: false, error: 'not found' })
+        return send(res, 200, { ok: true, session, nudge: session.nudge })
+      } catch (e) {
+        return send(res, 400, { ok: false, error: String(e.message || e) })
+      }
     }
   }
 
@@ -1158,11 +1332,19 @@ async function main() {
     let changed = false
     for (const s of listSessions()) {
       const before = s.status
-      const after = applyStall({ ...s })
-      if (after.status !== before || after.stopReason !== s.stopReason) {
+      const beforeNudge = s.nudge?.status
+      const beforeEsc = s.escalate?.at
+      let after = applyStall({ ...s })
+      after = applyNudgeExpiry(after)
+      if (
+        after.status !== before ||
+        after.stopReason !== s.stopReason ||
+        after.nudge?.status !== beforeNudge ||
+        after.escalate?.at !== beforeEsc
+      ) {
         writeJson(sessionPath(s.sessionId), after)
         changed = true
-        if (after.status === 'stalled') broadcast('stall', enrich(after))
+        if (after.status === 'stalled' && before !== 'stalled') broadcast('stall', enrich(after))
       }
     }
     if (changed) broadcast('sessions', listSessions().map(enrich))

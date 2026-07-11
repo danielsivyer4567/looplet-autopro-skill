@@ -320,11 +320,33 @@ try {
 }
 
 # Ensure Show Time server + register (do not open browser yet — discovery below)
+# Join gate: real primary repo name + branch + sessionId (never worktree sess_* as repoId)
+$primaryRepoName = [IO.Path]::GetFileName($RepoDir.TrimEnd('\', '/'))
+if ($workDir -match '(?i)[\\/]\.worktrees-showtime[\\/]') {
+  $primaryFromWt = ($workDir -replace '(?i)[\\/]\.worktrees-showtime[\\/].*$', '')
+  $rn = [IO.Path]::GetFileName($primaryFromWt.TrimEnd('\', '/'))
+  if ($rn) { $primaryRepoName = $rn }
+}
+$regBranch = ''
+try {
+  Push-Location -LiteralPath $workDir
+  $regBranch = ("$(git rev-parse --abbrev-ref HEAD 2>$null)").Trim()
+} catch {}
+finally { Pop-Location }
+if (-not $regBranch) {
+  try {
+    Push-Location -LiteralPath $RepoDir
+    $regBranch = ("$(git rev-parse --abbrev-ref HEAD 2>$null)").Trim()
+  } catch {}
+  finally { Pop-Location }
+}
 $regArgs = @(
   '-NoProfile', '-File', $Register,
   '-Action', 'register',
   '-SessionId', $sessionId,
   '-RepoDir', $workDir,
+  '-RepoId', $primaryRepoName,
+  '-Branch', $regBranch,
   '-Root', $Root,
   '-LedgerPath', $ledger,
   '-LedgerHash', $ledgerHash,
