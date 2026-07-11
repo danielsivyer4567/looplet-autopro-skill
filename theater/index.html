@@ -548,6 +548,12 @@ input,textarea,[contenteditable="true"]{
   font-size:10px;color:var(--orange);max-height:2.6em;overflow:hidden;
   font-family:ui-monospace,Consolas,monospace
 }
+/* SC-02 branch-first identity: real branch reads as a branch; sess id is the muted tail */
+.br{font-family:ui-monospace,Consolas,monospace;color:var(--cyan)}
+.sid{font-family:ui-monospace,Consolas,monospace;color:var(--muted);font-weight:600}
+.wt-ref{display:inline-block;padding:0 5px;margin-left:2px;border-radius:6px;font-size:9px;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+  border:1px solid rgba(148,163,184,.35);background:rgba(148,163,184,.1)}
 .empty{color:var(--muted);padding:60px 20px;text-align:center;width:min(560px,80vw)}
 .empty h2{letter-spacing:.14em;color:var(--cyan);margin-bottom:8px}
 .empty.offline h2{color:var(--rose)}
@@ -1149,6 +1155,21 @@ function saBadge(s){
 function repoLabel(s){
   return (s && (s.repoName || s.repoId)) || '—'
 }
+/** Branch-first identity: "<branch> · <sessId>" — branch leads, session id is the tail (SC-02 ②).
+ *  A synthetic "showtime/sess_..." ref is a worktree ref, NOT a real git branch — tag it as such
+ *  instead of presenting it as a fake branch. Returns HTML-safe markup (do NOT re-esc). */
+function branchTag(s){
+  if(!s) return ''
+  const sid = s.sessionId || ''
+  const sidHtml = sid ? `<span class="sid">${esc(sid)}</span>` : ''
+  const raw = (s.branch || '').trim()
+  if(!raw) return sidHtml || 'CHAT'
+  const isWorktreeRef = /^showtime\//i.test(raw)
+  const brHtml = isWorktreeRef
+    ? `${esc(raw)} <span class="wt-ref">worktree ref</span>`
+    : `<span class="br">${esc(raw)}</span>`
+  return sidHtml ? `${brHtml} · ${sidHtml}` : brHtml
+}
 
 function missionTotals(list){
   const scope = list && list.length ? list : sessions
@@ -1364,7 +1385,8 @@ function renderLanes(){
     const qprev=qs.length?`<div class="lane-q">? ${esc((qs[0].text||'').slice(0,110))}${qs.length>1?` +${qs.length-1}`:''}</div>`:''
     const letter = laneLetter(s.lane)
     const sa = saBadge(s)
-    const title = `${sa} · ${(s.repoId||'CHAT')}` + (s.branch ? ` · ${s.branch}` : '')
+    // Branch-first: "<branch> · <sessId>" (SC-02). branchTag returns HTML — do not esc() the title.
+    const title = `${esc(sa)} · ${branchTag(s)}`
     let meta = `${done}/${total}`
     let metaCls = ''
     if(clear){ meta = `${done}/${total} · CLEAR!`; metaCls='clear' }
@@ -1389,7 +1411,7 @@ function renderLanes(){
     return `<div class="lane ${flash}" data-id="${s.sessionId}">
       ${laneMissionHtml(s)}
       <div class="lane-h">
-        <div class="name"><span class="letter">${letter}</span> ${esc(title)} <span class="dim">· Chat ${subAgentNo(s)} · ${esc(s.slice?.id||'work')}</span></div>
+        <div class="name"><span class="letter">${letter}</span> ${title} <span class="dim">· Chat ${subAgentNo(s)} · ${esc(s.slice?.id||'work')}</span></div>
         <div class="meta ${metaCls}">${esc(meta)}</div>
       </div>
       <div class="track ${trackCls}">
@@ -1514,7 +1536,8 @@ function renderOps(){
         <div class="ms-row"><span>Code remaining:</span><b class="warn">${remaining}</b></div>
         <div class="ms-row"><span>Waiting on you:</span><b class="bad">${blocked}</b></div>
         <div class="ms-row"><span>Status:</span><b class="cyan">${esc(s.status||'—')}</b></div>
-        <div class="ms-row"><span>Repo:</span><b>${esc(repoLabel(s))} ${s.branch?'· '+esc(s.branch):''}</b></div>
+        <div class="ms-row"><span>Repo:</span><b>${esc(repoLabel(s))}</b></div>
+        <div class="ms-row"><span>Branch:</span><b>${branchTag(s)}</b></div>
         <div class="ms-foot"><span class="t">${esc(clock)}</span><span>updated just now</span></div>
       </div>
     </div>
