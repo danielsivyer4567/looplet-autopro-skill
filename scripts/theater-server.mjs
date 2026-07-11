@@ -168,15 +168,22 @@ function applyStall(session) {
       session.stopReason = session.stopReason || 'Open operator question'
     }
   }
-  const stallAfter = session.alarms?.stallAfterSec ?? 300
+  // Default 900s: a single claude -p slice often runs 5–15 min with little/no stdout
+  // (JSON output is buffered until exit). 300s false-stalled almost every long slice.
+  const stallAfter = session.alarms?.stallAfterSec ?? 900
   if (!session.alarms?.stallEnabled) return session
-  if (['blocked', 'needs_input', 'complete'].includes(session.status)) return session
+  if (['blocked', 'needs_input', 'complete', 'stalled', 'paused'].includes(session.status)) return session
+  // Live runner PID = work still in flight (quiet model call is not a stall)
+  if (session.pid && isPidAlive(session.pid)) return session
   const last = session.timer?.lastProgressAt || session.updatedAt
   if (!last) return session
   const age = (Date.now() - new Date(last).getTime()) / 1000
   if (age >= stallAfter && session.status === 'running') {
     session.status = 'stalled'
-    session.stopReason = `No progress for ${Math.round(age)}s (stall threshold ${stallAfter}s)`
+    const dead = session.pid && !isPidAlive(session.pid)
+    session.stopReason = dead
+      ? `No progress for ${Math.round(age)}s (stall threshold ${stallAfter}s) · runner pid dead`
+      : `No progress for ${Math.round(age)}s (stall threshold ${stallAfter}s)`
     session.timer = { ...(session.timer || {}), running: false }
   }
   return session
@@ -342,7 +349,7 @@ function registerSession(body) {
       completedSliceDurations: body.timer?.completedSliceDurations || existing?.timer?.completedSliceDurations || [],
     },
     alarms: {
-      stallAfterSec: body.alarms?.stallAfterSec ?? existing?.alarms?.stallAfterSec ?? 300,
+      stallAfterSec: body.alarms?.stallAfterSec ?? existing?.alarms?.stallAfterSec ?? 900,
       completeEnabled: body.alarms?.completeEnabled ?? true,
       stallEnabled: body.alarms?.stallEnabled ?? true,
     },

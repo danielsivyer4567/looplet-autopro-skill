@@ -47,13 +47,53 @@ function Get-ConfigExt {
 }
 
 function Find-InstalledLoopletId {
+  $hits = @()
+
+  # 1) Unpacked (load unpacked) IDs live in Secure Preferences, NOT under Extensions/
+  $userData = Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'
+  if (Test-Path -LiteralPath $userData) {
+    Get-ChildItem -LiteralPath $userData -Directory -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -eq 'Default' -or $_.Name -like 'Profile *' } |
+      ForEach-Object {
+        foreach ($prefName in @('Secure Preferences', 'Preferences')) {
+          $pref = Join-Path $_.FullName $prefName
+          if (-not (Test-Path -LiteralPath $pref)) { continue }
+          try {
+            $j = Get-Content -LiteralPath $pref -Raw -ErrorAction Stop | ConvertFrom-Json
+            $settings = $j.extensions.settings
+            if (-not $settings) { continue }
+            foreach ($prop in $settings.PSObject.Properties) {
+              $id = [string]$prop.Name
+              if ($id -notmatch '^[a-p]{32}$') { continue }
+              $s = $prop.Value
+              $path = [string]($s.path)
+              $name = ''
+              try { $name = [string]$s.manifest.name } catch {}
+              $blob = "$path $name"
+              if ($blob -match '(?i)ai-sidebar|looplet|ai.?sidebar') {
+                $hits += [pscustomobject]@{
+                  Id      = $id
+                  Name    = $(if ($name) { $name } else { 'Looplet (unpacked)' })
+                  Path    = $path
+                  Profile = $_.Name
+                  Rank    = $(if ($path -match '(?i)\\ai-sidebar\\extension') { 0 } elseif ($path -match '(?i)ai-sidebar') { 1 } else { 2 })
+                }
+              }
+            }
+          } catch {}
+        }
+      }
+  }
+
+  # 2) Packed installs under Extensions/ (store / CRX)
   $roots = @(
     (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data\Default\Extensions'),
     (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data\Profile 1\Extensions'),
+    (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data\Profile 2\Extensions'),
+    (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data\Profile 5\Extensions'),
     (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data\Default\Extensions'),
     (Join-Path $env:LOCALAPPDATA 'BraveSoftware\Brave-Browser\User Data\Default\Extensions')
   )
-  $hits = @()
   foreach ($root in $roots) {
     if (-not (Test-Path -LiteralPath $root)) { continue }
     Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue | ForEach-Object {
@@ -68,18 +108,21 @@ function Find-InstalledLoopletId {
         $blob = "$name $($j.description) $($j.short_name)"
         if ($blob -match '(?i)looplet|ai sidebar|show\s*time') {
           $hits += [pscustomobject]@{
-            Id   = $id
-            Name = $name
-            Path = $manif.FullName
+            Id      = $id
+            Name    = $name
+            Path    = $manif.FullName
+            Profile = ''
+            Rank    = 3
           }
         }
       } catch {}
     }
   }
-  # Prefer exact Looplet name
-  $exact = $hits | Where-Object { $_.Name -match '(?i)^looplet$' } | Select-Object -First 1
-  if ($exact) { return $exact }
-  return $hits | Select-Object -First 1
+
+  if (-not $hits.Count) { return $null }
+  # Prefer unpacked ai-sidebar/extension, then any Looplet name
+  $best = $hits | Sort-Object Rank, @{ Expression = { if ($_.Name -match '(?i)^looplet$') { 0 } else { 1 } } } | Select-Object -First 1
+  return $best
 }
 
 function Test-CompanionOpen([string]$boardUrl) {

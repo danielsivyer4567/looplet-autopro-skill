@@ -592,6 +592,42 @@ function Invoke-Slice($prompt) {
   $sw = [System.Diagnostics.Stopwatch]::StartNew()
   $buf = New-Object System.Text.StringBuilder
   $sliceExit = 0
+  # Mid-slice keep-alive: JSON-mode claude -p often emits nothing until exit, so
+  # line-matched heartbeats never fire and the board false-stalled at 300s.
+  $hbJob = $null
+  if (-not $NoShowTime) {
+    try {
+      $hbJob = Start-ThreadJob -ScriptBlock {
+        param($SessionId, $StateRoot, $LedgerPath, $LedgerHash, $LedgerTitle, $HandoverPath, $LogPath, $RunnerPid)
+        $ErrorActionPreference = 'SilentlyContinue'
+        $portFile = Join-Path $StateRoot 'server.port'
+        $tokFile = Join-Path $StateRoot 'server.token'
+        while ($true) {
+          Start-Sleep -Seconds 60
+          try {
+            if (-not (Test-Path -LiteralPath $portFile)) { continue }
+            $port = (Get-Content -LiteralPath $portFile -Raw).Trim()
+            $tok = if (Test-Path -LiteralPath $tokFile) { (Get-Content -LiteralPath $tokFile -Raw).Trim() } else { '' }
+            $body = @{
+              status      = 'running'
+              progress    = $true
+              pid         = $RunnerPid
+              ledgerPath  = $LedgerPath
+              ledgerHash  = $LedgerHash
+              ledgerTitle = $LedgerTitle
+              handoverPath = $HandoverPath
+              logPath     = $LogPath
+              sentinelEntry = @{ text = 'slice keep-alive (model still running)'; level = 'info' }
+            } | ConvertTo-Json -Compress -Depth 6
+            $headers = @{ Authorization = "Bearer $tok"; 'X-Showtime-Token' = $tok; 'Content-Type' = 'application/json' }
+            Invoke-RestMethod -Method POST -Uri "http://127.0.0.1:$port/api/sessions/$SessionId/heartbeat" -Headers $headers -Body $body -TimeoutSec 5 | Out-Null
+          } catch {}
+        }
+      } -ArgumentList @($SessionId, (Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater'), $ledger, $LedgerHash, $LedgerTitle, $handoverPath, $log, $PID)
+    } catch {
+      Log ("  warn: mid-slice heartbeat job not started: $($_.Exception.Message)")
+    }
+  }
   Push-Location -LiteralPath $WorkDir
   try {
     $claudeArgs = @('-p', $fullPrompt, '--verbose', '--dangerously-skip-permissions', '--output-format', 'json')
@@ -607,6 +643,10 @@ function Invoke-Slice($prompt) {
     $sliceExit = $LASTEXITCODE
   } finally {
     Pop-Location
+    if ($hbJob) {
+      try { Stop-Job -Job $hbJob -Force -ErrorAction SilentlyContinue } catch {}
+      try { Remove-Job -Job $hbJob -Force -ErrorAction SilentlyContinue } catch {}
+    }
   }
   $sw.Stop()
   $sec = [Math]::Max(0.5, $sw.Elapsed.TotalSeconds)

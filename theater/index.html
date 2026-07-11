@@ -1382,7 +1382,7 @@ function renderMissionFloat(){
   if(!el) return
   // MAP: per-lane cards. CLAW: mission lives inside LOOPLET FLEET head (not floating).
   const mapPerLane = viewMode==='map' && sessions.length > 0
-  const clawEmbed = viewMode==='claw' && sessions.length > 0
+  const clawEmbed = viewMode==='claw'   // CLAW never uses the floating modal, even with 0 sessions
   if(!missionFloatOpen){
     el.hidden = true
     if(shell) shell.hidden = true
@@ -2092,6 +2092,7 @@ function renderClaw(){
     stage.innerHTML=`<div style="text-align:center;padding:48px;color:var(--muted)">
       ${orchSvg('stagnant')}
       <div style="margin-top:12px">No fleet yet — arm autopro to grow the claw tree.</div>
+      ${fleetMissionEmbeddedHtml()}
     </div>`
     return
   }

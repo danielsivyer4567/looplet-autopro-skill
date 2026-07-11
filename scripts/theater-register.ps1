@@ -23,7 +23,7 @@ param(
   [switch]$Progress,
   [switch]$SliceComplete,
   [switch]$OpenBrowser,
-  [int]$StallAfterSec = 300
+  [int]$StallAfterSec = 900
 )
 
 $ErrorActionPreference = 'Stop'
