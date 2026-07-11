@@ -329,7 +329,8 @@ input,textarea,[contenteditable="true"]{
 .claw-node{
   display:flex;align-items:center;gap:8px;padding:6px 8px;margin-bottom:5px;
   border-radius:8px;border:1px solid rgba(255,255,255,.06);background:rgba(0,0,0,.28);
-  font-size:10px;cursor:pointer
+  font-size:10px;cursor:pointer;
+  position:relative;min-height:44px       /* SC-04: positioning ctx + room for the border-orbit */
 }
 .claw-node:hover{border-color:rgba(94,234,212,.3)}
 .claw-node .nt{flex:1;min-width:0;line-height:1.3}
@@ -358,6 +359,18 @@ input,textarea,[contenteditable="true"]{
 .claw-icon.still{opacity:.72;filter:grayscale(.3) drop-shadow(0 0 2px rgba(224,122,95,.25))}
 @keyframes inv-leg-l{0%,100%{transform:translateY(0)}50%{transform:translateY(1px)}}
 @keyframes inv-leg-r{0%,100%{transform:translateY(1px)}50%{transform:translateY(0)}}
+/* SC-04: active worker's bug walks its slice's BORDER clockwise — a big clock-hand
+   sweep of the card edge (top → right → bottom → left → back), amplitude = the card
+   itself, NOT an in-place wobble. Icon goes absolute so it traces the real node box;
+   legs keep marching on the inner <g> (independent element). Workers only. */
+@keyframes claw-orbit{
+  0%{left:2px;top:2px}                                    /* top-left corner */
+  25%{left:calc(100% - 30px);top:2px}                     /* → top-right */
+  50%{left:calc(100% - 30px);top:calc(100% - 30px)}       /* → bottom-right */
+  75%{left:2px;top:calc(100% - 30px)}                     /* → bottom-left */
+  100%{left:2px;top:2px}                                  /* → back to start */
+}
+.claw-icon.orbiting{position:absolute;z-index:2;margin:0;animation:claw-orbit 3.4s linear infinite}
 .claw-node .claw-icon{margin-top:1px}
 .claw-orch{
   image-rendering:pixelated;image-rendering:crisp-edges
@@ -531,7 +544,12 @@ input,textarea,[contenteditable="true"]{
 .h-pac .mouth{transform-origin:20px 20px;animation:pac-chomp .32s ease-in-out infinite alternate}
 @media (prefers-reduced-motion:reduce){
   .h-pac .mouth{animation:none}
+  .claw-icon.orbiting{animation:none}
 }
+/* pause legs + orbit while the tab is backgrounded (perf) */
+body.tab-hidden .claw-icon.orbiting,
+body.tab-hidden .claw-icon.running .leg-l,
+body.tab-hidden .claw-icon.running .leg-r{animation-play-state:paused}
 .ghost-sprite{
   position:absolute;top:50%;width:26px;height:26px;margin-top:-13px;z-index:2;
   filter:drop-shadow(0 0 6px currentColor);opacity:.92
@@ -1954,8 +1972,9 @@ function invaderPixelSvg(unit=2, label=''){
 }
 
 function clawSvg(running){
-  const runCls = running ? 'running' : 'still'
-  return `<div class="claw-icon ${runCls}" title="${running?'working — legs marching':'not working — legs still'}">
+  // SC-04: working bug marches its legs AND orbits its slice clockwise
+  const runCls = running ? 'running orbiting' : 'still'
+  return `<div class="claw-icon ${runCls}" title="${running?'working — orbiting its slice, legs marching':'not working — legs still'}">
     ${invaderPixelSvg(2)}
   </div>`
 }
@@ -2587,6 +2606,12 @@ $('z-fit').onclick=()=>fitAll()
     if(viewMode==='claw') requestAnimationFrame(()=>drawClawStrings())
   })
 })()
+
+// SC-04: pause CSS bug animations while the tab is hidden (perf)
+document.addEventListener('visibilitychange', ()=>{
+  document.body.classList.toggle('tab-hidden', document.hidden)
+})
+document.body.classList.toggle('tab-hidden', document.hidden)
 
 applyChrome()
 applyCanvas()
