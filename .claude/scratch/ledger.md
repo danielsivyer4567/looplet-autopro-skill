@@ -1,6 +1,6 @@
 # Ledger: Show Time board — operator-annotation upgrades
 
-Approved: yes @ 2026-07-12 (Phases A–C, SC-01→10). Phase D (SC-11→12) stays GATED — needs a separate explicit go.
+Approved: yes @ 2026-07-12 (Phases A–C + find-or-attach, SC-01→11). Phase D (SC-12→13) stays GATED — needs a separate explicit go.
 Graph: n/a
 Created: 2026-07-12
 Scope: The autopro Show Time board renders its OWN upgrades live (meta test).
@@ -55,9 +55,9 @@ Files: theater/index.html (mission render ~1219-1264, OPS repo row), maybe
   server enrich() to expose a clean repoName from repoPath basename.
 Notes: repoPath already registered (register.ps1:142). Derive repoName =
   basename(repoPath). ①. Pure display.
-Commit: —
+Commit: 1f53dae
 
-## SC-02 — Branch before session id on SA cards + OPS Repo row  [pending]
+## SC-02 — Branch before session id on SA cards + OPS Repo row  [done]
 DONE (machine): a session with branch="feat/x", sessionId="sess_abc" renders
   "feat/x · sess_abc" (branch first), NOT "showtime/sess_abc · sess_abc".
 DONE (human): SA card + OPS Repo row read branch-first; session id is the tail.
@@ -65,9 +65,12 @@ Files: theater/index.html (card title ~1363, OPS Repo row).
 Notes: ②. s.branch exists. If branch is literally "showtime/sess_..", show the
   real git branch if register passes one; else label it clearly as the
   worktree ref, not a fake branch.
-Commit: —
+  DONE: shared branchTag(s) → "<branch> · <sessId>" (branch leads, sess tail),
+  used by SA card title + OPS. showtime/sess_* tagged "worktree ref". Repo name
+  (SC-01) kept in its own OPS row.
+Commit: 9e2edc9
 
-## SC-03 — Worker % = share of whole ledger (consistent everywhere)  [pending]
+## SC-03 — Worker % = share of whole ledger (consistent everywhere)  [done]
 DONE (machine): the % shown next to the active slice on the card equals the %
   shown on the orbiting bug for the SAME session (single source: done/total of
   that session's ledger). Unit: a tiny pure fn pctOfLedger(session) used by
@@ -76,7 +79,12 @@ DONE (human): the 3% vs 12% mismatch is gone — one number, meaning "share of
   the whole lot".
 Files: theater/index.html (slice line ~1372, bug pct render).
 Notes: ③. Define ONE pct source and reuse. Pure calc.
-Commit: —
+  DONE: added pure pctOfLedger(s)->{done,total,pct} (denominator prefers whole
+  ledger: todos.length -> slice.total -> counts-sum). Routed ALL 4 per-session
+  render sites through it: LIST/Pac, DETAIL/OPS, MAP/claw-bug, list-detail. Was
+  divergent (repro fixture: LIST 3% vs MAP 11%) -> now 3% everywhere. console.assert
+  dev-gate (67%, 2/3). Inline JS parse clean; theater-server.mjs node --check OK.
+Commit: __PENDING__
 
 ---
 
@@ -167,11 +175,36 @@ Notes: ⑭. Pure client-side. Ask permission on first enable, never nag. Respect
   touch if cheap.
 Commit: —
 
-## SC-10 — Verify + doc: board upgrade pass  [pending]
+## SC-10 — Find-or-attach: reuse an existing board, never spawn a rival  [pending]
+DONE (machine): (1) theater-server.mjs: BEFORE the EADDRINUSE port-scan
+  (~1122), probe :8770 /api/health — if a healthy Show Time board already
+  answers there, DO NOT start a second server; log "attach: existing board on
+  8770" and exit 0 (the caller reads server.port and uses it). Only fall
+  through to the port-scan when the port is held by something that is NOT our
+  board (health probe fails/!ok). (2) A pure helper find-board (a small
+  function or scripts/find-board.ps1 / .mjs) that: reads the beacon
+  server.port from ~/.claude/scratch/autopro-theater/, probes
+  /api/health, and returns {alive, port, url} — "attach" if alive else
+  "spawn". (3) launch-showtime.ps1 uses find-board so a second arm ATTACHES
+  to the running board as the next lane instead of throwing or spawning.
+  node --check theater-server.mjs clean; a unit/dev-probe shows: with a board
+  up, a second ensure returns attach (same port), and does NOT open :8771.
+DONE (human): starting a 2nd/3rd/6th session joins the SAME board (next lane),
+  no new port, no rival server; joiners never need a URL — the beacon files
+  are the rendezvous.
+Files: scripts/theater-server.mjs (~1122 port bind), scripts/launch-showtime.ps1
+  (reuse path ~90/112/154), optional scripts/find-board (new tiny helper).
+Notes: This is the deterministic "find-or-attach" — beacon = server.port +
+  server.token files (NOT a URL, NOT a Chrome-window sniff). Fixes the live
+  bug where EADDRINUSE spawned a 2nd board on 8771 and a 2nd runner raced the
+  ledger. Reuse-first, spawn-only-if-dead. Keep it a singleton.
+Commit: —
+
+## SC-11 — Verify + doc: board upgrade pass  [pending]
 DONE (machine): board loads, SYNC works, token self-heal intact, no console
-  errors across LIST/MAP/CLAW; a short note appended to OPERATOR-HANDOVER.md
-  §4 describing the new signals.
-DONE (human): operator eyeballs all of SC-01..08 on the live board.
+  errors across LIST/MAP/CLAW; find-or-attach verified (2nd arm attaches);
+  a short note appended to OPERATOR-HANDOVER.md §4 describing the new signals.
+DONE (human): operator eyeballs all of SC-01..10 on the live board.
 Files: OPERATOR-HANDOVER.md, quick manual pass.
 Commit: —
 
@@ -186,7 +219,7 @@ Commit: —
 > and NOT part of the display pass. Do NOT start these under the same arm
 > without an explicit go.
 
-## SC-11 — Conflict detection: two SAs touching the same paths  [pending]
+## SC-12 — Conflict detection: two SAs touching the same paths  [pending]
 DONE (machine): server computes overlap between sessions' changed-file sets (or
   worktree branch bases) and marks a conflict flag; unit test on the overlap fn.
 DONE (human): "conflicting chats / working over each other" surfaces truthfully.
@@ -195,7 +228,7 @@ Notes: ⑦. Needs a real signal (git diff --name-only per worktree, or slice pat
   claims). Design first. GATED.
 Commit: —
 
-## SC-12 — Drift resolution + "waiting on user decision" clarity  [pending]
+## SC-13 — Drift resolution + "waiting on user decision" clarity  [pending]
 DONE (machine): a session blocked specifically on a user decision is labeled
   distinctly from a stall; a resolution affordance is shown.
 DONE (human): operator can tell "waiting on ME" vs "stuck", and act. ⑦.
@@ -208,7 +241,7 @@ Commit: —
 
 # Execution order
 Phase A (SC-01→03) · Phase B (SC-04→05) · Phase C (SC-06→09, incl. notifications)
-· SC-10 verify. Phase D (SC-11→12) only after an explicit second go — it's
+· SC-10 find-or-attach · SC-11 verify. Phase D (SC-12→13) only after an explicit second go — it's
 detection logic, not display.
 
 ## Autopro notes

@@ -1171,6 +1171,27 @@ function branchTag(s){
   return sidHtml ? `${brHtml} · ${sidHtml}` : brHtml
 }
 
+/** SINGLE SOURCE for a sub-agent's share of ITS OWN ledger (SC-03 ③).
+ *  Returns {done,total,pct} from that session's slices. LIST, DETAIL and MAP
+ *  all call this so the card % and the orbiting-bug % can never disagree
+ *  (kills the 3% vs 12% mismatch). Pure — no DOM, no globals. */
+function pctOfLedger(s){
+  const todos=(s&&s.todo)||[]
+  const c=(s&&s.counts)||{}
+  const done=(c.done!=null)?c.done:todos.filter(t=>t.state==='done').length
+  const total=Math.max(1, todos.length||(s&&s.slice&&s.slice.total)||
+    ((c.pending||0)+(c.inProgress||0)+(c.done||0)+(c.blocked||0))||1)
+  const pct=Math.round((done/total)*100)
+  return {done,total,pct}
+}
+// SC-03 dev-gate: single source must be self-consistent (card % === bug %).
+try{
+  const _t={todo:[{state:'done'},{state:'done'},{state:'pending'}],counts:{done:2,pending:1}}
+  const _a=pctOfLedger(_t), _b=pctOfLedger(_t)
+  console.assert(_a.pct===_b.pct && _a.pct===67 && _a.done===2 && _a.total===3,
+    'pctOfLedger self-test failed',_a,_b)
+}catch(e){ console.warn('pctOfLedger self-test skipped',e) }
+
 function missionTotals(list){
   const scope = list && list.length ? list : sessions
   let done=0, total=0, remaining=0, blocked=0, workers=0, completed=0
@@ -1353,8 +1374,7 @@ function renderLanes(){
   empty.dataset.offline = ''
   root.innerHTML = sessions.map(s=>{
     const todos=s.todo||[]
-    const total=Math.max(1, todos.length||s.slice?.total||1)
-    const done=s.counts?.done||0
+    const {done,total}=pctOfLedger(s)   // SC-03: single source, matches bug/detail %
     const prog = total>0 ? done/total : (s.progress||0)
     // Pac at end when clear; otherwise along progress
     const st=s.status||'running'
@@ -1479,11 +1499,9 @@ function renderOps(){
 
   const todos=s.todo||[]
   const c=s.counts||{}
-  const done=c.done||todos.filter(t=>t.state==='done').length
-  const total=todos.length||((c.pending||0)+(c.inProgress||0)+(c.done||0)+(c.blocked||0))||1
+  const {done,total,pct}=pctOfLedger(s)   // SC-03: same source as card/bug
   const remaining=(c.pending||0)+(c.inProgress||0) || todos.filter(t=>t.state==='pending'||t.state==='in-progress').length
   const blocked=(c.blocked||0)+oq(s).length+(s.needsInput?1:0)
-  const pct=total?Math.round((done/total)*100):0
   const healthy=!['stalled','blocked','needs_input','error'].includes(s.status)
   const st=s.stats||{}, tok=st.tokens||{}, spd=st.speed||{}, code=st.code||{}
   const clock=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})
@@ -2014,9 +2032,7 @@ function renderClaw(){
   const branches = sessions.map(s=>{
     const ws=sessionWorkState(s)
     const todos=s.todo||[]
-    const done=s.counts?.done||todos.filter(t=>t.state==='done').length
-    const total=Math.max(1, todos.length||((s.counts?.pending||0)+(s.counts?.inProgress||0)+(s.counts?.done||0)+(s.counts?.blocked||0))||1)
-    const pct=Math.round((done/total)*100)
+    const {done,total,pct}=pctOfLedger(s)   // SC-03: same source as card/detail
     const badge = ws==='running'?'<span class="badge run">ACTIVE</span>'
       : ws==='hold'?'<span class="badge hold">HOLDING</span>'
       : ws==='stagnant'?'<span class="badge bad">STAGNANT</span>'
@@ -2183,8 +2199,7 @@ function renderList(){
   // One section per chat/session (ledger lane)
   scroll.innerHTML = sessions.map(s=>{
     const todos=s.todo||[]
-    const done=s.counts?.done||todos.filter(t=>t.state==='done').length
-    const total=todos.length||((s.counts?.pending||0)+(s.counts?.inProgress||0)+(s.counts?.done||0)+(s.counts?.blocked||0))||1
+    const {done,total}=pctOfLedger(s)   // SC-03: same source as card/bug/detail
     const letter=laneLetter(s.lane)
     const coll=listCollapsed[s.sessionId]?'collapsed':''
     const rows = (todos.length?todos:[{id:s.slice?.id||'—',text:s.slice?.title||s.status||'session',state:s.status||'pending'}]).map(t=>{
