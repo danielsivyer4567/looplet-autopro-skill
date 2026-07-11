@@ -277,7 +277,19 @@ function enrich(session) {
     ? `SA-${lane} · Chat ${lane}`
     : (session.chatLabel || session.sessionId || 'agent')
   session.role = session.role || 'subagent'
+  // Real folder name from repoPath (basename), falling back to repoId — NOT the sess_-derived branch
+  session.repoName = repoNameOf(session)
   return session
+}
+
+// Derive a clean repo folder name from repoPath; fall back to repoId. Pure.
+function repoNameOf(session) {
+  const p = (session && session.repoPath || '').replace(/[\\/]+$/, '')
+  if (p) {
+    const base = p.split(/[\\/]/).pop()
+    if (base) return base
+  }
+  return (session && session.repoId) || ''
 }
 
 function registerSession(body) {

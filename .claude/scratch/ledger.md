@@ -44,7 +44,7 @@ harder and gated.
 
 # Phase A — Display truth (repo, branch, %) — pure render, no server logic
 
-## SC-01 — Repo NAME in header + OPS, not session-derived branch  [pending]
+## SC-01 — Repo NAME in header + OPS, not session-derived branch  [done]
 DONE (machine): node --check theater-server.mjs clean; index.html loads with
   no console error; a session with repoPath="...\looplet-self-repair-email-ui"
   shows repo name "looplet-self-repair-email-ui" in the mission Scope line AND

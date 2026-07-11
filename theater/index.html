@@ -1145,6 +1145,10 @@ function agentRef(s){
 function saBadge(s){
   return subAgentId(s)
 }
+/** Real repo FOLDER name (server enrich: basename of repoPath), not the sess_-derived branch. */
+function repoLabel(s){
+  return (s && (s.repoName || s.repoId)) || '—'
+}
 
 function missionTotals(list){
   const scope = list && list.length ? list : sessions
@@ -1235,7 +1239,7 @@ function fleetMissionRowsHtml(){
   const clock = missionClockText()
   const ageTxt = missionAgeText()
   const who = focus
-    ? `ORCH → ${agentRef(focus)} · ${esc(focus.repoId||'')} · fleet ${m.n}`
+    ? `ORCH → ${agentRef(focus)} · ${esc(repoLabel(focus))} · fleet ${m.n}`
     : `ORCH fleet · ${m.n} sub-agent${m.n===1?'':'s'} · ${viewMode.toUpperCase()}`
   return `
     <div class="ms-row"><span>Total:</span><b>${m.total} items</b></div>
@@ -1510,7 +1514,7 @@ function renderOps(){
         <div class="ms-row"><span>Code remaining:</span><b class="warn">${remaining}</b></div>
         <div class="ms-row"><span>Waiting on you:</span><b class="bad">${blocked}</b></div>
         <div class="ms-row"><span>Status:</span><b class="cyan">${esc(s.status||'—')}</b></div>
-        <div class="ms-row"><span>Repo:</span><b>${esc(s.repoId||'—')} ${s.branch?'· '+esc(s.branch):''}</b></div>
+        <div class="ms-row"><span>Repo:</span><b>${esc(repoLabel(s))} ${s.branch?'· '+esc(s.branch):''}</b></div>
         <div class="ms-foot"><span class="t">${esc(clock)}</span><span>updated just now</span></div>
       </div>
     </div>
