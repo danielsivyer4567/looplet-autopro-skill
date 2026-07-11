@@ -1,0 +1,5 @@
+node_modules/
+.claude/scratch/autopro.log
+.claude/scratch/autopro-on*
+.claude/scratch/autopro-runner.pid
+*.bak
