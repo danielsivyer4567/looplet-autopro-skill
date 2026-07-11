@@ -3,7 +3,7 @@
 
   Always:
     - Write handoff file (showtime-open.json) for the extension
-    - Open $BoardUrl in a real browser tab (Start-Process → cmd start → Chrome/Edge)
+    - Open $BoardUrl in Google Chrome; use the default browser only when Chrome is absent
 
   Additive (never suppress the browser tab):
     - Companion POST open hook on :4321 / :4322 if present
@@ -152,7 +152,15 @@ function Test-CompanionOpen([string]$boardUrl) {
 }
 
 function Open-ExtensionBoard([string]$extId, [string]$boardUrl) {
-  # Prefer side panel / board routes; extension team can add board.html later
+  # chrome-extension:// URLs must be launched through Chrome, never via shell association.
+  $chrome = Get-ChromePath
+  if (-not $chrome) {
+    Write-Output 'EXTENSION_OPEN_SKIP=no chrome.exe (board page is enough)'
+    return $false
+  }
+  $profile = 'Profile 5'
+  $cfg = Get-ConfigExt
+  if ($cfg -and $cfg.profile) { $profile = [string]$cfg.profile }
   $candidates = @(
     "chrome-extension://$extId/sidebar/sidebar.html?view=board&showtime=$([uri]::EscapeDataString($boardUrl))",
     "chrome-extension://$extId/sidebar/sidebar.html#board?showtime=$([uri]::EscapeDataString($boardUrl))",
@@ -161,27 +169,12 @@ function Open-ExtensionBoard([string]$extId, [string]$boardUrl) {
   )
   foreach ($u in $candidates) {
     try {
-      Start-Process $u -ErrorAction Stop
+      Start-Process -FilePath $chrome -ArgumentList @("--profile-directory=$profile", $u) -ErrorAction Stop
+      Write-Output "OPENED_EXTENSION_VIA=$chrome profile=$profile"
       Write-Output "OPENED_EXTENSION=$u"
       return $true
     } catch {
-      # try chrome.exe with the URL
-      foreach ($chrome in @(
-          "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
-          "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
-          "${env:LOCALAPPDATA}\Google\Chrome\Application\chrome.exe",
-          "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
-          "${env:ProgramFiles}\Microsoft\Edge\Application\msedge.exe"
-        )) {
-        if (Test-Path $chrome) {
-          try {
-            Start-Process -FilePath $chrome -ArgumentList @($u) -ErrorAction Stop
-            Write-Output "OPENED_EXTENSION_VIA=$chrome"
-            Write-Output "OPENED_EXTENSION=$u"
-            return $true
-          } catch {}
-        }
-      }
+      Write-Output "EXTENSION_OPEN_WARN=$($_.Exception.Message)"
     }
   }
   return $false
@@ -220,6 +213,8 @@ function Open-BoardInBrowser([string]$url) {
     } catch {
       Write-Output "OPEN_CHROME_WARN=$($_.Exception.Message)"
     }
+    # Chrome is installed but could not launch. Never fall through to another browser.
+    return
   } else {
     Write-Output 'OPEN_CHROME_WARN=chrome.exe not found — falling back to default browser'
   }
@@ -245,23 +240,6 @@ function Open-BoardInBrowser([string]$url) {
     return
   } catch {
     Write-Output "OPEN_PAGE_CMD_WARN=$($_.Exception.Message)"
-  }
-  # Prefer Chrome/Edge directly if shell association still failed
-  foreach ($browser in @(
-      "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
-      "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
-      "${env:LOCALAPPDATA}\Google\Chrome\Application\chrome.exe",
-      "${env:ProgramFiles}\Microsoft\Edge\Application\msedge.exe",
-      "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
-    )) {
-    if (-not (Test-Path -LiteralPath $browser)) { continue }
-    try {
-      Start-Process -FilePath $browser -ArgumentList @($url) -ErrorAction Stop
-      $script:BoardPageOpened = $true
-      Write-Output "OPENED_PAGE_VIA=$browser"
-      Write-Output "OPENED_PAGE=$url"
-      return
-    } catch {}
   }
   Write-Output "OPEN_PAGE_FAILED=could not open $url"
 }
