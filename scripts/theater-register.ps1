@@ -111,6 +111,20 @@ function Get-RepoIdFromPath([string]$dir) {
   return [IO.Path]::GetFileName($dir.TrimEnd('\', '/'))
 }
 
+# Operator call 2026-07-12: board opens in GOOGLE CHROME first, default browser only if absent
+function Open-BoardUrl([string]$url) {
+  foreach ($c in @(
+      "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
+      "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+      "${env:LOCALAPPDATA}\Google\Chrome\Application\chrome.exe"
+    )) {
+    if (Test-Path -LiteralPath $c) {
+      try { Start-Process -FilePath $c -ArgumentList @($url); return } catch {}
+    }
+  }
+  try { Start-Process $url } catch {}
+}
+
 switch ($Action) {
   'url' {
     $u = Get-ShowTimeBaseUrl
@@ -121,7 +135,7 @@ switch ($Action) {
   'ensure' {
     $u = Start-ShowTimeServer
     if ($OpenBrowser) {
-      Start-Process "$u/"
+      Open-BoardUrl "$u/"
     }
     Write-Output $u
     break
@@ -158,7 +172,7 @@ switch ($Action) {
       }
     }
     $result = Invoke-ShowTimeJson -Method POST -Url "$u/api/sessions" -Body $body
-    if ($OpenBrowser) { Start-Process "$u/" }
+    if ($OpenBrowser) { Open-BoardUrl "$u/" }
     Write-Output ($result.session | ConvertTo-Json -Depth 6 -Compress)
     Write-Output "SHOWTIME_URL=$u/"
     Write-Output "SESSION_ID=$SessionId"

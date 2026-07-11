@@ -395,9 +395,21 @@ if (Test-Path -LiteralPath $openBoard) {
   if ($NoBrowser) { $openArgs += '-NoBrowser' }
   & pwsh @openArgs 2>&1 | ForEach-Object { Write-Output "open> $_" }
 } elseif (-not $NoBrowser) {
+  # Operator call 2026-07-12: board opens in GOOGLE CHROME, never default (Edge)
   Write-Output "Opening Show Time board in browser (direct): $boardUrl"
+  $chromeExe = $null
+  foreach ($c in @(
+      "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
+      "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+      "${env:LOCALAPPDATA}\Google\Chrome\Application\chrome.exe"
+    )) { if (Test-Path -LiteralPath $c) { $chromeExe = $c; break } }
   try {
-    Start-Process $boardUrl
+    if ($chromeExe) {
+      Start-Process -FilePath $chromeExe -ArgumentList @($boardUrl)
+      Write-Output "open> OPENED_PAGE_VIA=$chromeExe"
+    } else {
+      Start-Process $boardUrl
+    }
     Write-Output "open> OPENED_PAGE=$boardUrl"
   } catch {
     try {
