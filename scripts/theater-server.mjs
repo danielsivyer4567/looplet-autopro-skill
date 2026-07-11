@@ -90,20 +90,26 @@ function parseLedgerTodos(ledgerPath) {
   if (!ledgerPath || !fs.existsSync(ledgerPath)) return []
   const text = fs.readFileSync(ledgerPath, 'utf8')
   const todos = []
-  const re = /^##\s+((?:SC-\d+)|(?:SD-[\w-]+)|(?:H\d+)|(?:P\d+[-\w]*))\s+(?:[—–-]\s+)?(.+?)\s+\[(pending|in-progress|done|blocked)\]/gim
+  // SC-06: also recognize [standby] and [standby: <reason>] so a slice can be
+  // marked on hold with WHY, straight from the ledger — additive, never fakes a
+  // reason (the optional group is only captured when the operator writes one).
+  const re = /^##\s+((?:SC-\d+)|(?:SD-[\w-]+)|(?:H\d+)|(?:P\d+[-\w]*))\s+(?:[—–-]\s+)?(.+?)\s+\[(pending|in-progress|done|blocked|standby)(?:\s*[:—–-]\s*([^\]]+))?\]/gim
   let m
   while ((m = re.exec(text)) !== null) {
-    todos.push({ id: m[1], text: m[2].trim(), state: m[3].toLowerCase() })
+    const t = { id: m[1], text: m[2].trim(), state: m[3].toLowerCase() }
+    if (t.state === 'standby' && m[4]) t.standbyReason = m[4].trim()
+    todos.push(t)
   }
   return todos
 }
 function deriveCounts(todos) {
-  const counts = { pending: 0, inProgress: 0, done: 0, blocked: 0 }
+  const counts = { pending: 0, inProgress: 0, done: 0, blocked: 0, standby: 0 }
   for (const t of todos) {
     if (t.state === 'pending') counts.pending++
     else if (t.state === 'in-progress') counts.inProgress++
     else if (t.state === 'done') counts.done++
     else if (t.state === 'blocked') counts.blocked++
+    else if (t.state === 'standby') counts.standby++ // SC-06: on-hold, not done
   }
   return counts
 }
@@ -301,7 +307,7 @@ function registerSession(body) {
   todos = todos || existing?.todo || []
   const counts = body.counts || deriveCounts(todos)
   const slice = body.slice || activeSlice(todos)
-  const total = counts.pending + counts.inProgress + counts.done + counts.blocked
+  const total = counts.pending + counts.inProgress + counts.done + counts.blocked + (counts.standby || 0)
   const done = counts.done
   const progress = total > 0 ? done / total : 0
   const lane = existing?.lane || body.lane || nextLane()

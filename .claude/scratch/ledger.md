@@ -140,13 +140,13 @@ Notes: don't animate legs on stalled. Red = warning, reserve for genuinely
   No render/JS change — hooked existing attribute. Verified live on :8770:
   computed card border = rgba(251,113,133,.5), badge .bad, bug .still (frozen),
   0 console errors, playwright screenshot confirms red card. Pure CSS, GPU-safe.
-Commit: PENDING
+Commit: 71d54b2
 
 ---
 
 # Phase C — States & ORCH attention (surface existing data)
 
-## SC-06 — Slice state labels: pending / standby(+reason)  [pending]
+## SC-06 — Slice state labels: pending / standby(+reason)  [done]
 DONE (machine): a slice with state 'pending' shows "pending" (next in line);
   a slice with a standbyReason shows "standby — <reason>"; missing reason on a
   standby renders "standby — (no reason given)" so it's never silently blank.
@@ -156,7 +156,18 @@ Files: theater/index.html (slice line render ~1372-1380); server may pass a
   standbyReason field through registerSession if present (optional, additive).
 Notes: pending already derivable; standby+reason is the new label. If the
   server has no reason yet, show the placeholder — do NOT fake a reason.
-Commit: —
+  DONE: added pure sliceStateLabel(t) (single source, sits beside pctOfLedger)
+  + console.assert dev-gate — pending passes through; state 'standby' OR a
+  standbyReason yields "standby — <reason>" and falls back to
+  "standby — (no reason given)", never blank. Routed all 3 render sites through
+  it: OPS/DETAIL todosHtml, CLAW node .ns line, LIST tags (new amber .tag.standby
+  + title tooltip, distinct from blue pending). CLAW node cls: standby→hold(amber),
+  NOT bad(rose) — rose stays SC-05-only. Server (additive): parseLedgerTodos now
+  recognizes [standby] / [standby: <reason>] and carries standbyReason; deriveCounts
+  gains a standby bucket; session total denominator now includes standby (remaining
+  work). Verified live on isolated :8793 via playwright: CLAW shows "pending",
+  "standby — conflicting paths", "standby — (no reason given)"; 0 console errors.
+Commit: 9869183
 
 ## SC-07 — ORCH previous-notes log + click-to-open  [pending]
 DONE (machine): ORCH card shows a "Previous notes" affordance with a count;

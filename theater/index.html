@@ -182,6 +182,7 @@ input,textarea,[contenteditable="true"]{
 .list-row .tag.p1{background:rgba(251,191,36,.15);color:#fcd34d}
 .list-row .tag.done{background:rgba(163,230,53,.15);color:#bef264}
 .list-row .tag.run{background:rgba(94,234,212,.15);color:var(--cyan)}
+.list-row .tag.standby{background:rgba(251,191,36,.18);color:#fcd34d} /* SC-06: amber, on-hold — distinct from blue pending */
 .list-row .title{font-size:12px;color:var(--ink);line-height:1.35}
 .list-row .btn{
   border:1px solid var(--line);background:transparent;color:var(--muted);
@@ -717,6 +718,7 @@ body.tab-hidden .claw-icon.running .leg-r{animation-play-state:paused}
 .todo{display:flex;gap:6px;padding:3px 0;font-size:11px}
 .todo .mk{width:11px;height:11px;border:1.5px solid #3d4a5c;border-radius:3px;margin-top:2px;flex:none}
 .todo.done .mk{background:var(--lime);border-color:var(--lime)}
+.todo.standby .mk{background:rgba(251,191,36,.35);border-color:#fbbf24} /* SC-06: on-hold marker, amber */
 .field textarea{width:100%;min-height:48px;background:rgba(0,0,0,.35);border:1px solid var(--line);
   border-radius:8px;color:var(--ink);padding:8px;font:inherit;font-size:11px}
 .field .row{display:flex;gap:6px;margin-top:6px}
@@ -1219,6 +1221,24 @@ try{
     'pctOfLedger self-test failed',_a,_b)
 }catch(e){ console.warn('pctOfLedger self-test skipped',e) }
 
+/** SINGLE SOURCE for a slice's human state label (SC-06 ⑥).
+ *  pending -> "pending" (next in line). A slice on standby shows its reason
+ *  ("standby — <why>") and NEVER renders silently blank: a standby with no
+ *  reason gets an explicit placeholder so the gap is visible, not faked. Any
+ *  other state (in-progress/done/blocked/…) passes through verbatim. Pure. */
+function sliceStateLabel(t){
+  const st=(t&&t.state)||'pending'
+  const reason=String((t&&(t.standbyReason||t.standby_reason))||'').trim()
+  if(st==='standby' || reason) return `standby — ${reason||'(no reason given)'}`
+  return st
+}
+// SC-06 dev-gate: pending stays pending; standby always shows WHY (or placeholder).
+try{
+  console.assert(sliceStateLabel({state:'pending'})==='pending','SC-06 pending label')
+  console.assert(sliceStateLabel({state:'standby',standbyReason:'conflicting paths'})==='standby — conflicting paths','SC-06 standby+reason label')
+  console.assert(sliceStateLabel({state:'standby'})==='standby — (no reason given)','SC-06 standby placeholder')
+}catch(e){ console.warn('sliceStateLabel self-test skipped',e) }
+
 function missionTotals(list){
   const scope = list && list.length ? list : sessions
   let done=0, total=0, remaining=0, blocked=0, workers=0, completed=0
@@ -1564,7 +1584,7 @@ function renderOps(){
       ${esc(b.text)}
     </div>`).join('') || '<div style="color:var(--muted)">No bookmarks</div>'
 
-  const todosHtml=todos.map(t=>`<div class="todo ${t.state==='done'?'done':''}"><div class="mk"></div><div><b style="color:var(--cyan);font-family:ui-monospace,Consolas,monospace">${esc(t.id)}</b> ${esc(t.text)} <span style="color:var(--muted)">· ${esc(t.state)}</span></div></div>`).join('')||'—'
+  const todosHtml=todos.map(t=>`<div class="todo ${t.state==='done'?'done':''} ${t.state==='standby'?'standby':''}"><div class="mk"></div><div><b style="color:var(--cyan);font-family:ui-monospace,Consolas,monospace">${esc(t.id)}</b> ${esc(t.text)} <span style="color:var(--muted)">· ${esc(sliceStateLabel(t))}</span></div></div>`).join('')||'—'
 
   const chev=id=>(panelOpen[id]===false?'▸':'▾')
 
@@ -2071,8 +2091,10 @@ function renderClaw(){
       const st=t.state||'pending'
       const nrun = st==='in-progress'
       const nhold = st==='blocked'
+      const nstandby = st==='standby'
       const ndone = st==='done'
-      const cls = ndone?'done':nrun?'run':nhold?'hold':'bad'
+      // SC-06: standby is on-hold (amber like hold), not stuck (rose = SC-05 only)
+      const cls = ndone?'done':nrun?'run':nhold?'hold':nstandby?'hold':'bad'
       const legs = nrun
       let holdNote=''
       if(nhold || (ws==='hold' && nrun)) holdNote=`<div class="claw-hold-note">holding — ${esc(s.stopReason||'awaiting operator / dependency')}</div>`
@@ -2082,7 +2104,7 @@ function renderClaw(){
         <div class="nt">
           <div class="nid">${esc(t.id||'')}</div>
           <div class="nx">${esc(t.text||'')}</div>
-          <div class="ns">${esc(st)}${ndone?' · ✓':''}${nrun?' · working':''}</div>
+          <div class="ns">${esc(sliceStateLabel(t))}${ndone?' · ✓':''}${nrun?' · working':''}</div>
           ${holdNote}
         </div>
       </div>`
@@ -2237,6 +2259,7 @@ function renderList(){
       if(st==='done') tags.push('<span class="tag done">done</span>')
       else if(st==='in-progress') tags.push('<span class="tag run">running</span>')
       else if(st==='blocked') tags.push('<span class="tag p0">blocked</span>')
+      else if(st==='standby') tags.push(`<span class="tag standby" title="${esc(sliceStateLabel(t))}">standby</span>`) // SC-06: distinct from pending, reason in tooltip + row
       else tags.push('<span class="tag">pending</span>')
       tags.push(`<span class="tag">${esc(t.id||'')}</span>`)
       return `<div class="list-row" data-sid="${s.sessionId}" data-tid="${esc(t.id||'')}">
