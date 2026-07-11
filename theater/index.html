@@ -306,6 +306,14 @@ input,textarea,[contenteditable="true"]{
   background:linear-gradient(180deg,#141820,#0e1218);
   box-shadow:0 8px 24px rgba(0,0,0,.35);overflow:hidden
 }
+/* SC-05: a stagnant SA reads as BAD at the CARD level — rose border + faint glow,
+   matching the LIST track.stalled treatment. The bug's legs are already frozen
+   (clawSvg(false) → .still) and the badge is .bad; this makes the whole node red
+   so a stuck SA is unmistakable from across the room. data-edge set at render. */
+.claw-branch[data-edge="stagnant"] .claw-branch-card{
+  border-color:rgba(251,113,133,.5);
+  box-shadow:0 8px 24px rgba(0,0,0,.35), 0 0 14px rgba(251,113,133,.16)
+}
 .claw-branch-card .bh{
   padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.06);
   display:flex;justify-content:space-between;align-items:flex-start;gap:6px
@@ -519,7 +527,8 @@ input,textarea,[contenteditable="true"]{
   border-color:rgba(249,115,22,.55);
   box-shadow:inset 0 2px 8px rgba(0,0,0,.5), 0 0 16px rgba(249,115,22,.15)
 }
-.track.stalled{
+/* SC-05: genuinely stuck (stalled OR blocked) reads rose — a warning, not idle */
+.track.stalled,.track.blocked{
   border-color:rgba(251,113,133,.5);
   box-shadow:inset 0 2px 8px rgba(0,0,0,.5), 0 0 14px rgba(251,113,133,.12)
 }

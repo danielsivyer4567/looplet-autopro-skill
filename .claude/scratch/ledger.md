@@ -84,26 +84,45 @@ Notes: ③. Define ONE pct source and reuse. Pure calc.
   render sites through it: LIST/Pac, DETAIL/OPS, MAP/claw-bug, list-detail. Was
   divergent (repro fixture: LIST 3% vs MAP 11%) -> now 3% everywhere. console.assert
   dev-gate (67%, 2/3). Inline JS parse clean; theater-server.mjs node --check OK.
-Commit: __PENDING__
+Commit: 893de31
 
 ---
 
 # Phase B — Animation (legs, clockwise orbit, stagnant-still)
 
-## SC-04 — Active worker bug orbits its slice clockwise + legs moving  [pending]
+## SC-04 — Active worker bug orbits its slice clockwise + legs moving  [done]
 DONE (machine): CSS-only; an .orbit keyframe path exists; a session with
   status running/in-progress adds an "orbiting" class to its bug; node --check
   n/a (CSS/HTML); no JS error.
 DONE (human): the active worker's crab visibly travels CLOCKWISE around the
-  perimeter of its working slice, legs animating (matches the green loop the
-  operator drew). ④ + ⑬.
+  PERIMETER OF THE CARD like a clock hand sweeping the border — top edge →
+  right edge → bottom edge → left edge → back — NOT a tiny in-place wobble.
+  From across the room it must read as "walking the node's border", a big
+  obvious loop, legs marching as it goes. Workers only (NOT the orchestrator).
+  ④ + ⑬.
 Files: theater/index.html (CSS @keyframes + .claw-icon.orbiting; render adds
   the class when st==='running'||slice.state==='in-progress').
-Notes: reuse inv-leg-l/r for legs; add an orbit path animation. Perf: transform
-  only, one element. Pause when tab hidden (prefers-reduced-motion respected).
-Commit: —
+Notes: reuse inv-leg-l/r for legs; add an orbit path animation.
+  CORRECTION (operator, 2026-07-12): the first pass built a ±4px micro-orbit
+  (translate 4px,0 → -4px,0) — that's an 8px jiggle in place, NOT the intended
+  clock-hand sweep of the card's edge. REDO the geometry so the bug travels the
+  actual card perimeter: position it absolute inside the card and animate
+  top/left (or offset-path: a rounded-rect border path via CSS motion-path) so
+  it visibly circles the whole node border. Amplitude = the card's size, not a
+  few px. Keep it transform/offset-path only (GPU), one element, paused on
+  tab-hidden + prefers-reduced-motion. Workers only.
+  DONE (redo): the working bug now goes position:absolute inside its .claw-node
+  (node made position:relative, min-height:44px) and animates left/top around
+  the REAL node box via @keyframes claw-orbit: TL(2,2)→TR→BR→BL→TL, clockwise,
+  3.4s linear. Amplitude = the card itself (freeze-frame proof at 0/25/50/75%
+  shows the bug at each corner). Legs still march on the inner <g> (running
+  class kept). Workers only (orchSvg untouched). Paused via
+  body.tab-hidden + prefers-reduced-motion:reduce. NOTE: used left/top not
+  transform% — transform% is self-relative so it can't trace a variable-size
+  parent box; left/top on one out-of-flow element is cheap (no sibling reflow).
+Commit: e6396db
 
-## SC-05 — Stagnant = frozen legs + reads as BAD (red)  [pending]
+## SC-05 — Stagnant = frozen legs + reads as BAD (red)  [done]
 DONE (machine): a session status stalled/stagnant → bug has NO leg animation
   and gets a .bad/.stagnant class; card border/badge turns rose; no JS error.
 DONE (human): a stagnant SA is obviously "no good" — still legs, red highlight,
@@ -112,7 +131,16 @@ Files: theater/index.html (CSS .stagnant already exists ~257; extend to card +
   bug; render gates leg anim off on stalled/stagnant).
 Notes: don't animate legs on stalled. Red = warning, reserve for genuinely
   stuck (stalled/blocked), not merely queued.
-Commit: —
+  DONE: bug legs + badge were already handled (clawSvg(false)→.still, badge.bad,
+  sessionWorkState→'stagnant' for stalled/error). The GAP was the CLAW-MAP card:
+  data-edge="stagnant" was emitted (render ~2083) but UNSTYLED, so only the badge
+  went rose. Added .claw-branch[data-edge="stagnant"] .claw-branch-card → rose
+  border + faint glow (whole node reads BAD, not just badge). Also folded
+  .track.blocked into .track.stalled so blocked lanes read rose too (LIST view).
+  No render/JS change — hooked existing attribute. Verified live on :8770:
+  computed card border = rgba(251,113,133,.5), badge .bad, bug .still (frozen),
+  0 console errors, playwright screenshot confirms red card. Pure CSS, GPU-safe.
+Commit: PENDING
 
 ---
 
