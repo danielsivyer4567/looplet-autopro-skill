@@ -7,10 +7,18 @@ Slice execution is **not Claude-only**. The runner spawns whatever agent CLI you
 | Engine | CLI | Unattended flags | Auto-pick | Notes |
 |--------|-----|------------------|-----------|--------|
 | **claude** | `claude.exe` | `--dangerously-skip-permissions` | 1st | Best-integrated; JSON usage/cost |
-| **codex** | `node …/codex.js exec` | `--dangerously-bypass-approvals-and-sandbox` | 2nd | OpenAI Codex CLI |
-| **gemini** | `node …/gemini.js` | `-y` (yolo) | 3rd | Google Gemini CLI |
-| **grok** | `grok.exe` | `--always-approve` + `bypassPermissions` | 4th | Grok Build CLI |
+| **codex** | `node …/codex.js exec` | `--dangerously-bypass-approvals-and-sandbox` | 2nd | Prompt on argv; empty stdin EOF (required) |
+| **gemini** | `node …/gemini.js` | `--approval-mode auto_edit` | 3rd | Prefer auto_edit; admin may disable YOLO (`-y`) |
+| **grok** | `grok.exe` | `--always-approve` + `bypassPermissions` + **`-p`** | 4th | Must use `-p` (positional hangs under CreateNoWindow); `--max-turns 80` |
 | **ollama** | `ollama run` | local | **never** | Text-only — needs `-AllowOllama` |
+
+### Headless gotchas (proven)
+
+| Engine | Failure mode | Fix |
+|--------|--------------|-----|
+| **codex** | `Reading additional input from stdin…` forever | Redirect stdin + **close immediately** (empty EOF); prompt on argv |
+| **grok** | Positional prompt never exits (TUI) | Use **`-p` / `--single`** for headless |
+| **gemini** | `YOLO mode is disabled by administrator` | Use **`auto_edit`**, not `-y` |
 
 Auto order: `claude → codex → gemini → grok`  
 Override: `$env:AUTOPRO_ENGINE_ORDER = 'codex,gemini,claude'`

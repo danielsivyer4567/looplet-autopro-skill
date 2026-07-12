@@ -292,7 +292,8 @@ switch ($Action) {
     break
   }
   'register' {
-    # Default = request-join (operator must Approve). -OpenRegister = legacy direct POST.
+    # Default = request-join (operator must Approve). -OpenRegister = unattended:
+    # join-request + auto-approve + POST session (prompt-and-play after risk switches).
     if (-not $OpenRegister) {
       # Re-enter request-join via recursive call of the same script
       $argList = @(
@@ -330,6 +331,41 @@ switch ($Action) {
     $resolvedRepo = Get-RepoIdFromPath $RepoDir
     if (-not $resolvedRepo) { throw 'repo name required for register (real folder, not sess id / worktree leaf)' }
     if (-not $Branch) { throw 'branch required for register (join gate)' }
+
+    # Auto-approve path for unattended arms (same as operator clicking Approve).
+    $joinBody = @{
+      sessionId   = $SessionId
+      repoId      = $resolvedRepo
+      repoPath    = $RepoDir
+      branch      = $Branch
+      status      = $Status
+      pid         = $RunnerPid
+      ledgerPath  = $LedgerPath
+      ledgerHash  = $LedgerHash
+      ledgerTitle = $LedgerTitle
+      logPath     = $LogPath
+      ledgerKey   = $LedgerHash
+      primaryRepoPath = $(if ($Root) { $Root } else { $RepoDir })
+    }
+    try {
+      $jr = Invoke-ShowTimeJson -Method POST -Url "$u/api/join-requests" -Body $joinBody
+      $jstatus = [string]$jr.status
+      Write-Output ("JOIN_STATUS={0}" -f $jstatus)
+      $jid = $null
+      if ($jr.request -and $jr.request.id) { $jid = [string]$jr.request.id }
+      if ($jstatus -eq 'pending' -and $jid) {
+        $ap = Invoke-ShowTimeJson -Method POST -Url "$u/api/join-requests/$jid/approve" -Body @{ by = 'open-register' }
+        Write-Output 'JOIN_STATUS=approved'
+        if ($ap.session) {
+          Write-Output ($ap.session | ConvertTo-Json -Depth 6 -Compress)
+        }
+      } elseif ($jstatus -eq 'already_on_board' -or $jstatus -eq 'approved') {
+        if ($jr.session) { Write-Output ($jr.session | ConvertTo-Json -Depth 6 -Compress) }
+      }
+    } catch {
+      Write-Output ("JOIN_WARN={0}" -f $_.Exception.Message)
+    }
+
     $body = @{
       sessionId   = $SessionId
       repoId      = $resolvedRepo
@@ -363,9 +399,14 @@ switch ($Action) {
       }
       if ($Engine) { $body.engine = $Engine }
     }
-    $result = Invoke-ShowTimeJson -Method POST -Url "$u/api/sessions" -Body $body
+    try {
+      $result = Invoke-ShowTimeJson -Method POST -Url "$u/api/sessions" -Body $body
+      if ($result.session) { Write-Output ($result.session | ConvertTo-Json -Depth 6 -Compress) }
+    } catch {
+      # After approve, session may already exist from approveJoinRequest
+      Write-Output ("REGISTER_WARN={0}" -f $_.Exception.Message)
+    }
     if ($OpenBrowser) { Open-BoardUrl "$u/" }
-    Write-Output ($result.session | ConvertTo-Json -Depth 6 -Compress)
     Write-Output "SHOWTIME_URL=$u/"
     Write-Output "SESSION_ID=$SessionId"
     if ($Engine) { Write-Output "ENGINE=$Engine" }

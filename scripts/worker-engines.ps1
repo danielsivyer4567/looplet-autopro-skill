@@ -317,19 +317,24 @@ function Build-WorkerArgumentList {
       return @($args)
     }
     'gemini' {
+      # Headless: -p prompt. Prefer auto_edit over -y — many installs disable YOLO
+      # via admin policy ("disableYolo") and -y fails immediately.
       $args = [System.Collections.Generic.List[string]]::new()
       if ($model) { [void]$args.Add('-m'); [void]$args.Add($model) }
       if ($SkipPermissions) {
-        [void]$args.Add('-y')  # yolo — auto-accept all actions
-      } else {
         [void]$args.Add('--approval-mode'); [void]$args.Add('auto_edit')
+      } else {
+        [void]$args.Add('--approval-mode'); [void]$args.Add('default')
       }
       [void]$args.Add('--skip-trust')
       [void]$args.Add('-p'); [void]$args.Add($Prompt)
       return @($args)
     }
     'grok' {
-      # Multi-turn agentic session, non-TUI-friendly flags when available
+      # Headless agentic: -p/--single with always-approve + bypassPermissions.
+      # Positional prompt without -p opens the TUI and hangs under CreateNoWindow
+      # (smoke: GROK1 TIMEOUT). -p still runs tools (smoke: read a.txt → "hello").
+      # --max-turns keeps multi-step ledger work inside one process.
       $args = [System.Collections.Generic.List[string]]::new()
       if ($WorkDir) { [void]$args.Add('--cwd'); [void]$args.Add($WorkDir) }
       if ($model) { [void]$args.Add('-m'); [void]$args.Add($model) }
@@ -338,8 +343,8 @@ function Build-WorkerArgumentList {
         [void]$args.Add('--permission-mode'); [void]$args.Add('bypassPermissions')
       }
       [void]$args.Add('--output-format'); [void]$args.Add('json')
-      # Positional prompt starts the session (headless-ish when output-format set)
-      [void]$args.Add($Prompt)
+      [void]$args.Add('--max-turns'); [void]$args.Add('80')
+      [void]$args.Add('-p'); [void]$args.Add($Prompt)
       return @($args)
     }
     'ollama' {
@@ -506,8 +511,8 @@ function Get-EngineRiskLabel {
   switch ($Engine) {
     'claude' { return '--dangerously-skip-permissions' }
     'codex'  { return '--dangerously-bypass-approvals-and-sandbox' }
-    'gemini' { return '-y / yolo' }
-    'grok'   { return '--always-approve + bypassPermissions' }
+    'gemini' { return '--approval-mode auto_edit (yolo often admin-disabled)' }
+    'grok'   { return '--always-approve + bypassPermissions + -p' }
     'ollama' { return 'local (no remote approvals)' }
     default  { return 'engine-specific unattended flags' }
   }

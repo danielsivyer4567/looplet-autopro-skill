@@ -159,7 +159,8 @@ if (-not $KeepClaude) {
     Get-CimInstance Win32_Process -Filter "Name='claude.exe' OR Name='node.exe' OR Name='grok.exe' OR Name='ollama.exe' OR Name='codex.exe'" `
       -OperationTimeoutSec 8 -ErrorAction SilentlyContinue
   ) + @(
-    Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" `
+    # Codex real worker is often codex.exe under node; also catch gemini via node cmdline
+    Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe' OR Name='node.exe'" `
       -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
       Where-Object { $_.CommandLine -and (Test-IsWorkerProc $_) }
   )

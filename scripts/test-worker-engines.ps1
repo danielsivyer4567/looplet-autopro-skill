@@ -90,12 +90,14 @@ foreach ($e in @('claude', 'codex', 'gemini', 'grok', 'ollama')) {
       Assert-True ($joined -match '-m') 'codex model flag'
     }
     'gemini' {
-      Assert-True ($joined -match '-y' -or $joined -match 'yolo') 'gemini yolo'
+      Assert-True ($joined -match 'auto_edit' -or $joined -match '-y') 'gemini auto_edit/yolo'
       Assert-True ($joined -match '-p') 'gemini -p'
     }
     'grok' {
       Assert-True ($joined -match '--always-approve') 'grok always-approve'
       Assert-True ($joined -match 'bypassPermissions') 'grok bypass'
+      Assert-True ($joined -match '-p' -or $joined -match '--single') 'grok -p headless'
+      Assert-True ($joined -match '--max-turns') 'grok max-turns'
     }
     'ollama' {
       Assert-True ($joined -match 'run') 'ollama run'
