@@ -509,3 +509,60 @@ function Get-EngineRiskLabel {
     default  { return 'engine-specific unattended flags' }
   }
 }
+
+function Test-EngineVersion {
+  <#
+    Cheap smoke: spawn --version (no LLM). Returns pscustomobject.
+  #>
+  param(
+    [Parameter(Mandatory = $true)]$Resolution,
+    [int]$TimeoutMs = 8000
+  )
+  $out = [pscustomobject]@{
+    Engine    = $Resolution.Engine
+    Available = [bool]$Resolution.Available
+    Ok        = $false
+    ExitCode  = -1
+    Version   = ''
+    Error     = ''
+    Ms        = 0
+  }
+  if (-not $Resolution.Available) {
+    $out.Error = $Resolution.Hint
+    return $out
+  }
+  try {
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = $Resolution.FileName
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    foreach ($a in @($Resolution.PrefixArgs)) {
+      if ($null -ne $a -and [string]$a -ne '') { [void]$psi.ArgumentList.Add([string]$a) }
+    }
+    [void]$psi.ArgumentList.Add('--version')
+    $proc = [System.Diagnostics.Process]::new()
+    $proc.StartInfo = $psi
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    if (-not $proc.Start()) { throw 'start failed' }
+    if (-not $proc.WaitForExit($TimeoutMs)) {
+      try { $proc.Kill($true) } catch {}
+      $out.Error = 'timeout'
+      $out.Ms = $sw.ElapsedMilliseconds
+      return $out
+    }
+    $stdout = $proc.StandardOutput.ReadToEnd()
+    $stderr = $proc.StandardError.ReadToEnd()
+    $text = (($stdout + ' ' + $stderr) -replace '\s+', ' ').Trim()
+    if ($text.Length -gt 160) { $text = $text.Substring(0, 160) + '…' }
+    $out.ExitCode = $proc.ExitCode
+    $out.Version = $text
+    $out.Ok = ($proc.ExitCode -eq 0 -or $text.Length -gt 0)
+    $out.Ms = $sw.ElapsedMilliseconds
+    $proc.Dispose()
+  } catch {
+    $out.Error = $_.Exception.Message
+  }
+  return $out
+}

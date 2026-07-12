@@ -39,6 +39,9 @@ param(
   [string]$VerifierModel = '',
   [ValidateRange(0, 3)]
   [int]$VerifierRepairAttempts = 1,
+  # Kill hung worker processes after N minutes (0 = no wall-clock kill; still use stall alarm)
+  [ValidateRange(0, 480)]
+  [int]$MaxSliceMinutes = 90,
   # base = all mini-branches rejoin the epic branch you armed from (default)
   # main = each ledger session merges into main/master after check
   [ValidateSet('base', 'main')]
@@ -131,9 +134,17 @@ if ($VerifierEngine -and $VerifierEngine.Trim()) {
     throw "VERIFIER_ENGINE_PREFLIGHT_FAILED: $($_.Exception.Message)"
   }
 }
+# Honor env verifier/model when flags empty (prompt-and-play defaults)
+if (-not $Model -and $env:AUTOPRO_MODEL) { $Model = $env:AUTOPRO_MODEL.Trim() }
+if (-not $VerifierEngine -and $env:AUTOPRO_VERIFIER_ENGINE) { $VerifierEngine = $env:AUTOPRO_VERIFIER_ENGINE.Trim() }
+if (-not $VerifierModel -and $env:AUTOPRO_VERIFIER_MODEL) { $VerifierModel = $env:AUTOPRO_VERIFIER_MODEL.Trim() }
+
 Write-Output ("ENGINE_SELECTED={0}" -f $resolvedEngine.Engine)
 Write-Output ("ENGINE_DISPLAY={0}" -f $resolvedEngine.Display)
 Write-Output ("ENGINE_RISK={0}" -f (Get-EngineRiskLabel -Engine $resolvedEngine.Engine))
+if ($Model) { Write-Output ("MODEL={0}" -f $Model) }
+if ($VerifierEngine) { Write-Output ("VERIFIER_ENGINE={0}" -f $VerifierEngine) }
+if ($MaxSliceMinutes -gt 0) { Write-Output ("MAX_SLICE_MINUTES={0}" -f $MaxSliceMinutes) }
 
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 # Per-session flag: each runner owns its own kill switch, so lanes can't disarm
@@ -444,8 +455,12 @@ if (-not $NoShowTime) {
     '-LedgerHash', $ledgerHash,
     '-LedgerTitle', $ledgerTitle,
     '-LogPath', (Join-Path $scratch 'autopro.log'),
-    '-Status', 'running'
+    '-Status', 'running',
+    '-Engine', $resolvedEngine.Engine
   )
+  if ($Model) { $regArgs += @('-Model', $Model) }
+  if ($VerifierEngine) { $regArgs += @('-VerifierEngine', $VerifierEngine) }
+  if ($VerifierModel) { $regArgs += @('-VerifierModel', $VerifierModel) }
   & pwsh @regArgs | ForEach-Object { Write-Output $_ }
 }
 
@@ -484,6 +499,7 @@ if ($PushOnFinish) { $runnerArgParts += '-PushOnFinish' }
 if ($AllowModelOnlyFinalCheck) { $runnerArgParts += '-AllowModelOnlyFinalCheck' }
 if ($NoSliceVerifier) { $runnerArgParts += '-NoSliceVerifier' }
 if ($VerifierModel) { $runnerArgParts += @('-VerifierModel', (Quote-Arg $VerifierModel)) }
+if ($MaxSliceMinutes -gt 0) { $runnerArgParts += @('-MaxSliceMinutes', "$MaxSliceMinutes") }
 if ($baseBranch) { $runnerArgParts += @('-BaseBranch', (Quote-Arg $baseBranch)) }
 if ($MainBranch) { $runnerArgParts += @('-MainBranch', (Quote-Arg $MainBranch)) }
 $runnerArgLine = ($runnerArgParts -join ' ')
@@ -711,6 +727,10 @@ Write-Output (Tv-Screen (Tv-Pad '' 34))
 Write-Output (Tv-Screen (Tv-Pad $boardUrl 34))
 Write-Output (Tv-Screen (Tv-Pad '' 34))
 Write-Output (Tv-Screen (Tv-Pad 'autonomous ledger  ● LIVE' 34))
+$engTv = ("engine {0}" -f $resolvedEngine.Engine)
+if ($Model) { $engTv = ("{0} · {1}" -f $engTv, $Model) }
+if ($engTv.Length -gt 34) { $engTv = $engTv.Substring(0, 34) }
+Write-Output (Tv-Screen (Tv-Pad $engTv 34))
 Write-Output (Tv-Screen (Tv-Pad '' 34))
 Write-Output (Tv-Outer ('  └' + ('─' * 34) + '┘  '))
 Write-Output (Tv-Outer (Tv-Pad '(  ) VOL          CHANNEL (  )' 40))

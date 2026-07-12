@@ -41,17 +41,26 @@ $report = [ordered]@{
 # --- Engines ---
 $all = Get-AllEngineResolutions
 $report.engines = @($all | ForEach-Object {
+    $ver = Test-EngineVersion -Resolution $_
     [ordered]@{
       engine    = $_.Engine
       available = $_.Available
       agentic   = $_.Agentic
       display   = $_.Display
       hint      = $_.Hint
+      versionOk = $ver.Ok
+      version   = $ver.Version
     }
   })
 if (-not $Json) {
   Write-Output '==== autopro doctor ===='
   Write-Output (Format-EnginePreflightReport -Resolutions $all)
+  Write-Output 'ENGINE_VERSIONS'
+  foreach ($e in $report.engines) {
+    $flag = if ($e.versionOk) { 'OK ' } else { '—  ' }
+    $v = if ($e.version) { $e.version } else { $e.hint }
+    Write-Output ("  [{0}] {1,-7} {2}" -f $flag, $e.engine, $v)
+  }
 }
 
 try {

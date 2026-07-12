@@ -30,7 +30,10 @@ param(
   [switch]$NoSliceVerifier,
   [string]$VerifierModel = '',
   [ValidateRange(0, 3)]
-  [int]$VerifierRepairAttempts = 1
+  [int]$VerifierRepairAttempts = 1,
+  # Wall-clock kill for hung workers (0 = disabled). Default 90 matches launch.
+  [ValidateRange(0, 480)]
+  [int]$MaxSliceMinutes = 90
 )
 
 $ErrorActionPreference = 'Stop'
@@ -629,8 +632,25 @@ function Invoke-WorkerProcess {
     $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
     $stderrTask = $proc.StandardError.ReadToEndAsync()
     $lastHb = [DateTime]::UtcNow
+    $timedOut = $false
+    $maxSec = if ($MaxSliceMinutes -gt 0) { [double]($MaxSliceMinutes * 60) } else { 0.0 }
     while (-not $proc.WaitForExit(1000)) {
       $now = [DateTime]::UtcNow
+      if ($maxSec -gt 0 -and $sw.Elapsed.TotalSeconds -ge $maxSec) {
+        $timedOut = $true
+        Log ("  worker TIMEOUT after {0}m — killing pid {1} ({2})" -f $MaxSliceMinutes, $proc.Id, $res.Engine)
+        try {
+          # Kill tree: node-spawned CLIs may leave grandchildren
+          & taskkill.exe /PID $proc.Id /T /F 2>&1 | ForEach-Object { Log ("  taskkill| {0}" -f $_) }
+        } catch {
+          try { $proc.Kill($true) } catch { try { $proc.Kill() } catch {} }
+        }
+        try {
+          Invoke-ShowTime -Action heartbeat -Status stalled -StopReason ("Worker timeout {0}m" -f $MaxSliceMinutes) `
+            -Sentinel ("TIMEOUT · {0} · {1}m" -f $res.Engine, $MaxSliceMinutes)
+        } catch {}
+        break
+      }
       if (($now - $lastHb).TotalSeconds -ge 45) {
         $lastHb = $now
         try {
@@ -638,12 +658,17 @@ function Invoke-WorkerProcess {
         } catch {}
       }
     }
-    $proc.WaitForExit()
-    $stdout = $stdoutTask.GetAwaiter().GetResult()
-    $stderr = $stderrTask.GetAwaiter().GetResult()
+    if (-not $proc.HasExited) {
+      try { $proc.WaitForExit(15000) } catch {}
+    }
+    $stdout = ''
+    $stderr = ''
+    try { $stdout = $stdoutTask.GetAwaiter().GetResult() } catch {}
+    try { $stderr = $stderrTask.GetAwaiter().GetResult() } catch {}
     $parts = @()
     if ($stdout) { $parts += $stdout.TrimEnd("`r", "`n") }
     if ($stderr) { $parts += $stderr.TrimEnd("`r", "`n") }
+    if ($timedOut) { $parts += ("AUTOPRO_WORKER_TIMEOUT=1 maxSliceMinutes={0}" -f $MaxSliceMinutes) }
     $text = $parts -join "`n"
     $lines = @($text -split "`r?`n" | Where-Object { $_ -ne '' })
     for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -653,13 +678,15 @@ function Invoke-WorkerProcess {
       }
     }
     $usage = Parse-WorkerUsageFromText -Text $text -Engine $res.Engine
+    $exitCode = if ($timedOut) { 124 } elseif ($proc.HasExited) { $proc.ExitCode } else { 124 }
     return [pscustomobject]@{
       Text      = $text
-      ExitCode  = $proc.ExitCode
+      ExitCode  = $exitCode
       Seconds   = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
       LineCount = $lines.Count
       Engine    = $res.Engine
       Usage     = $usage
+      TimedOut  = $timedOut
     }
   } finally {
     $sw.Stop()
@@ -1063,6 +1090,7 @@ Log ("workerEngine={0} display={1} requested={2}" -f $script:EngineId, $script:W
 Log ("workerModel={0} source={1}" -f $(if ($script:Stats.model) { $script:Stats.model } else { '(pending first worker result)' }), $script:Stats.modelSource)
 Log ("sliceVerifier={0} verifierEngine={1} verifierModel={2} repairAttempts={3}" -f $(if ($NoSliceVerifier) { 'off' } else { 'on' }), $script:VerifierEngineId, $(if ($script:Stats.verifierModel) { $script:Stats.verifierModel } else { 'same-as-worker' }), $VerifierRepairAttempts)
 Log ("engineRisk={0}" -f (Get-EngineRiskLabel -Engine $script:EngineId))
+Log ("maxSliceMinutes={0}" -f $(if ($MaxSliceMinutes -gt 0) { $MaxSliceMinutes } else { 'off' }))
 
 # Detached runner has no TTY. Without unattended flags, the first tool call waits forever.
 if (-not $SkipPermissions) {

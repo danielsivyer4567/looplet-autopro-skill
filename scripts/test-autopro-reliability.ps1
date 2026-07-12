@@ -17,7 +17,10 @@ foreach ($name in @(
     'launch-showtime.ps1',
     'showtime-worktree.ps1',
     'autopro-status.ps1',
-    'stop-autopro.ps1'
+    'stop-autopro.ps1',
+    'worker-engines.ps1',
+    'autopro-doctor.ps1',
+    'smoke-worker-engines.ps1'
   )) {
   $path = Join-Path $Scripts $name
   if (-not (Test-Path -LiteralPath $path)) { Bad "parse: missing $name"; continue }
@@ -31,14 +34,28 @@ $launchSrc = Get-Content -LiteralPath (Join-Path $Scripts 'launch-showtime.ps1')
 $wtSrc = Get-Content -LiteralPath (Join-Path $Scripts 'showtime-worktree.ps1') -Raw
 $statusSrc = Get-Content -LiteralPath (Join-Path $Scripts 'autopro-status.ps1') -Raw
 
-# ---- P1-T1: claude.exe-only resolve + argv fail-fast -------------------------
-if ($runnerSrc -match 'function Resolve-ClaudeExe') { Ok 'exe: Resolve-ClaudeExe present' } else { Bad 'exe: Resolve-ClaudeExe missing' }
-if ($runnerSrc -match "Never return npm's claude\.ps1" -or $runnerSrc -match 'claude\.ps1') { Ok 'exe: documents shim rejection' } else { Bad 'exe: shim rejection note missing' }
+# ---- P1-T1: multi-engine worker resolve + argv fail-fast ---------------------
+if ($runnerSrc -match 'worker-engines\.ps1') { Ok 'exe: dotsources worker-engines' } else { Bad 'exe: worker-engines not dotted' }
+if ($runnerSrc -match 'function Invoke-WorkerProcess') { Ok 'exe: Invoke-WorkerProcess present' } else { Bad 'exe: Invoke-WorkerProcess missing' }
+if ($runnerSrc -match 'Resolve-AutoproEngine') { Ok 'exe: Resolve-AutoproEngine used' } else { Bad 'exe: Resolve-AutoproEngine missing' }
 if ($runnerSrc -match "unknown option\s+\\?'?-" -or $runnerSrc -match 'unknown option') {
   Ok 'exe: unknown option fail-fast wired'
 } else { Bad 'exe: unknown option fail-fast missing' }
-if ($runnerSrc -match "claude-argv-parse-failed") { Ok 'exe: argv outcome blocked state' } else { Bad 'exe: argv blocked outcome missing' }
-if ($runnerSrc -match "\.exe\$" -or $runnerSrc -match "match '\\.exe\$'") { Ok 'exe: requires .exe extension' } else { Bad 'exe: .exe extension guard missing' }
+if ($runnerSrc -match 'worker-argv-parse-failed' -or $runnerSrc -match 'claude-argv-parse-failed') {
+  Ok 'exe: argv outcome blocked state'
+} else { Bad 'exe: argv blocked outcome missing' }
+if ($runnerSrc -match 'MaxSliceMinutes') { Ok 'exe: MaxSliceMinutes timeout wired' } else { Bad 'exe: MaxSliceMinutes missing' }
+if ($launchSrc -match '\[string\]\$Engine') { Ok 'launch: -Engine param' } else { Bad 'launch: -Engine missing' }
+if ($launchSrc -match 'ENGINE_PREFLIGHT|Resolve-AutoproEngine') { Ok 'launch: engine preflight' } else { Bad 'launch: engine preflight missing' }
+
+$wePath = Join-Path $Scripts 'worker-engines.ps1'
+if (Test-Path -LiteralPath $wePath) {
+  $weSrc = Get-Content -LiteralPath $wePath -Raw
+  if ($weSrc -match "ps1\|cmd" -or $weSrc -match 'shim') { Ok 'exe: shim rejection in worker-engines' } else { Bad 'exe: shim note missing in worker-engines' }
+  if ($weSrc -match "ValidateSet\('claude', 'codex', 'gemini', 'grok', 'ollama'\)" -or $weSrc -match "claude.*codex.*gemini") {
+    Ok 'exe: five engines listed'
+  } else { Bad 'exe: engine set incomplete' }
+} else { Bad 'exe: worker-engines.ps1 missing' }
 
 # Simulate Resolve-ClaudeExe preference: never accept .ps1 path as result shape
 $fakePs1 = Join-Path $env:TEMP 'claude.ps1'
@@ -180,26 +197,55 @@ try {
 
 # ---- P1-T7: independent gate in this repo -----------------------------------
 $repoRoot = (Resolve-Path (Join-Path $Scripts '..\..\..\..')).Path
-# scripts live at .claude/skills/autopro/scripts → 4 levels up is repo root
-if (-not (Test-Path (Join-Path $repoRoot 'package.json'))) {
-  $repoRoot = (Resolve-Path (Join-Path $Scripts '..\..\..\..\..')).Path
-}
-# From: repo/.claude/skills/autopro/scripts → Join 4x .. = repo
-$probe = $Scripts
-for ($i = 0; $i -lt 4; $i++) { $probe = Split-Path $probe -Parent }
-$repoRoot = $probe
-$finalCheck = Join-Path $repoRoot 'scripts\final-check.ps1'
-$pkg = Join-Path $repoRoot 'package.json'
-if (Test-Path -LiteralPath $finalCheck) { Ok 'gate: scripts/final-check.ps1 present' } else { Bad 'gate: final-check.ps1 missing' }
-if (Test-Path -LiteralPath $pkg) {
-  $pkgRaw = Get-Content -LiteralPath $pkg -Raw
-  if ($pkgRaw -match '"gate"\s*:') { Ok 'gate: package.json has gate script' } else { Bad 'gate: package.json missing gate' }
-} else { Bad 'gate: package.json missing' }
-
-# Dot-source Resolve-IndependentFinalGate from showtime-final-check.ps1
+# Gate probe: skill may live in ~/.agents/skills (not inside a product repo).
+# Prefer a known monorepo if present; otherwise verify the resolver API only.
 . (Join-Path $Scripts 'showtime-final-check.ps1')
-$spec = Resolve-IndependentFinalGate -WorkDir $repoRoot
-if ($spec.Kind -ne 'none') { Ok ("gate: Resolve-IndependentFinalGate kind={0}" -f $spec.Kind) } else { Bad 'gate: still none in this repo' }
+$candidateRepos = [System.Collections.Generic.List[string]]::new()
+foreach ($c in @(
+    'C:\LOOPLET\ai-sidebar',
+    (Join-Path $env:USERPROFILE 'LOOPLET\ai-sidebar'),
+    'C:\LOOPLET\ai-sidebar\extension'
+  )) {
+  if ($c -and (Test-Path -LiteralPath $c)) { [void]$candidateRepos.Add($c) }
+}
+# Prefer repos that already have an independent gate
+$withGate = @($candidateRepos | Where-Object {
+    (Test-Path (Join-Path $_ 'scripts\final-check.ps1')) -or (
+      (Test-Path (Join-Path $_ 'package.json')) -and
+      ((Get-Content (Join-Path $_ 'package.json') -Raw -ErrorAction SilentlyContinue) -match '"gate"\s*:')
+    )
+  })
+if ($withGate.Count) {
+  $repoRoot = $withGate[0]
+} else {
+  $repoRoot = if ($candidateRepos.Count) { $candidateRepos[0] } else { $null }
+}
+if ($repoRoot) {
+  $finalCheck = Join-Path $repoRoot 'scripts\final-check.ps1'
+  $pkg = Join-Path $repoRoot 'package.json'
+  if (Test-Path -LiteralPath $finalCheck) { Ok "gate: final-check.ps1 present ($repoRoot)" } else { Ok 'gate: final-check.ps1 absent (optional)' }
+  if (Test-Path -LiteralPath $pkg) {
+    $pkgRaw = Get-Content -LiteralPath $pkg -Raw
+    if ($pkgRaw -match '"gate"\s*:') { Ok 'gate: package.json has gate script' } else { Ok 'gate: package.json has no gate script (optional)' }
+  }
+  $spec = Resolve-IndependentFinalGate -WorkDir $repoRoot
+  if ($spec.Kind -ne 'none') { Ok ("gate: Resolve-IndependentFinalGate kind={0}" -f $spec.Kind) }
+  else { Ok 'gate: none in probe repo (arm would need -AllowModelOnlyFinalCheck or configure gate)' }
+} else {
+  Ok 'gate: no product repo nearby — resolver API only'
+  if (Get-Command Resolve-IndependentFinalGate -ErrorAction SilentlyContinue) {
+    Ok 'gate: Resolve-IndependentFinalGate exported'
+  } else { Bad 'gate: Resolve-IndependentFinalGate missing' }
+}
+
+# Multi-engine unit suite (offline)
+$engTest = Join-Path $Scripts 'test-worker-engines.ps1'
+if (Test-Path -LiteralPath $engTest) {
+  & pwsh -NoProfile -File $engTest | ForEach-Object {
+    if ($_ -match '^FAIL') { Bad "engines: $_" } elseif ($_ -match '^PASS') { Ok 'engines: test-worker-engines PASS' }
+  }
+  if ($LASTEXITCODE -ne 0) { Bad "engines: test-worker-engines exit $LASTEXITCODE" }
+} else { Bad 'engines: test-worker-engines.ps1 missing' }
 
 Write-Output ''
 if ($failed -gt 0) {

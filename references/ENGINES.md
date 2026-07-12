@@ -53,8 +53,20 @@ Windows `claude.ps1` / `codex.ps1` collapse ProcessStartInfo argv. Resolution al
 
 Heartbeats include `stats.engine` + `stats.model` so fleets show **which CLI** is burning credits.
 
+## Safety
+
+| Control | Default |
+|---------|---------|
+| Risk switches to arm | required (`-AllowDangerousSkipPermissions` + `-IAcceptUnattendedRisk`) |
+| Max slice wall clock | **90 minutes** (`-MaxSliceMinutes 0` disables) |
+| Stop orphans | `stop-autopro.ps1` kills all worker CLIs + pidfile |
+| Board credit chips | engine + model on register and every heartbeat |
+
 ## Tests
 
 ```powershell
 pwsh -File "$env:USERPROFILE\.claude\skills\autopro\scripts\test-worker-engines.ps1"
+pwsh -File "$env:USERPROFILE\.claude\skills\autopro\scripts\smoke-worker-engines.ps1"
+pwsh -File "$env:USERPROFILE\.claude\skills\autopro\scripts\test-autopro-reliability.ps1"
+pwsh -File "$env:USERPROFILE\.claude\skills\autopro\scripts\autopro-doctor.ps1" -RepoDir <repo>
 ```

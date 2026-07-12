@@ -20,6 +20,11 @@ param(
   [string]$LogPath = '',
   [string]$HandoverPath = '',
   [string]$HandoverText = '',
+  # Multi-engine credit visibility (optional; runner also heartbeats stats)
+  [string]$Engine = '',
+  [string]$Model = '',
+  [string]$VerifierEngine = '',
+  [string]$VerifierModel = '',
   [switch]$Progress,
   [switch]$SliceComplete,
   [switch]$OpenBrowser,
@@ -348,11 +353,22 @@ switch ($Action) {
         startedAt = (Get-Date).ToUniversalTime().ToString('o')
       }
     }
+    if ($Engine -or $Model) {
+      $body.stats = @{
+        engine         = $(if ($Engine) { $Engine } else { '' })
+        model          = $(if ($Model) { $Model } else { '' })
+        modelSource    = $(if ($Model) { 'register' } else { 'pending-worker-result' })
+        verifierEngine = $(if ($VerifierEngine) { $VerifierEngine } else { $Engine })
+        verifierModel  = $(if ($VerifierModel) { $VerifierModel } else { $Model })
+      }
+      if ($Engine) { $body.engine = $Engine }
+    }
     $result = Invoke-ShowTimeJson -Method POST -Url "$u/api/sessions" -Body $body
     if ($OpenBrowser) { Open-BoardUrl "$u/" }
     Write-Output ($result.session | ConvertTo-Json -Depth 6 -Compress)
     Write-Output "SHOWTIME_URL=$u/"
     Write-Output "SESSION_ID=$SessionId"
+    if ($Engine) { Write-Output "ENGINE=$Engine" }
     break
   }
   'heartbeat' {
@@ -371,6 +387,14 @@ switch ($Action) {
     if ($HandoverText) { $body.handoverText = $HandoverText }
     if ($Progress) { $body.progress = $true }
     if ($SliceComplete) { $body.sliceComplete = $true }
+    if ($Engine -or $Model) {
+      $body.stats = @{
+        engine = $(if ($Engine) { $Engine } else { '' })
+        model  = $(if ($Model) { $Model } else { '' })
+      }
+      if ($VerifierEngine) { $body.stats.verifierEngine = $VerifierEngine }
+      if ($VerifierModel) { $body.stats.verifierModel = $VerifierModel }
+    }
     try {
       $result = Invoke-ShowTimeJson -Method POST -Url "$u/api/sessions/$SessionId/heartbeat" -Body $body
       Write-Output ($result.session | ConvertTo-Json -Depth 6 -Compress)

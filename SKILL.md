@@ -45,6 +45,7 @@ Canonical scripts live in this skill:
 | `scripts/showtime-open-board.ps1` | **Always** open board URL in browser; companion/extension hooks additive |
 | `scripts/test-showtime.ps1` | Automated board tests (no LLM) |
 | `scripts/test-worker-engines.ps1` | Offline multi-engine unit tests |
+| `scripts/smoke-worker-engines.ps1` | Live `--version` smoke (no LLM tokens) |
 | `theater/index.html` | Show Time UI |
 | `theater/tips.json` | Pause-screen rotating tips |
 | `references/ENGINES.md` | Engine matrix + env vars |
