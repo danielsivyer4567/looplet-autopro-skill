@@ -63,29 +63,46 @@ function Start-ShowTimeServer {
   $node = Get-Command node -ErrorAction SilentlyContinue
   if (-not $node) { throw 'node is required for Show Time server' }
 
-  # Detach so agent shells / job objects don't kill the board when the parent exits.
-  # Prefer CreateNoWindow + Redirect so we don't rely on UseShellExecute alone
-  # (that path was leaving dead server.pid files and a "offline" home card).
-  $outLog = Join-Path $StateRoot 'server.out.log'
-  $errLog = Join-Path $StateRoot 'server.err.log'
+  # Detach OUTSIDE the parent Job Object. Start-Process with RedirectStandard*
+  # keeps the board inside agent/CI jobs — parent exit kills :8770 mid-run
+  # (seen as connection-refused heartbeats while codex keeps working).
+  # Win32_Process.Create is the same durable detach as launch-showtime runner.
+  $cmdLine = '"{0}" "{1}"' -f $node.Source, $ServerJs
+  $started = $false
   try {
-    $p = Start-Process -FilePath $node.Source `
-      -ArgumentList @($ServerJs) `
-      -WorkingDirectory $SkillRoot `
-      -WindowStyle Hidden `
-      -RedirectStandardOutput $outLog `
-      -RedirectStandardError $errLog `
-      -PassThru
-    if ($p) { Write-Output "SHOWTIME_PID=$($p.Id)" }
+    $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+      CommandLine      = $cmdLine
+      CurrentDirectory = $SkillRoot
+    }
+    if ($created.ReturnValue -eq 0 -and $created.ProcessId) {
+      Write-Output ("SHOWTIME_PID={0}" -f $created.ProcessId)
+      Write-Output 'SHOWTIME_DETACH=Win32_Process.Create'
+      $started = $true
+    }
   } catch {
-    # Fallback: shell-execute detach
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $node.Source
-    $psi.Arguments = "`"$ServerJs`""
-    $psi.WorkingDirectory = $SkillRoot
-    $psi.UseShellExecute = $true
-    $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-    [void][System.Diagnostics.Process]::Start($psi)
+    Write-Output ("SHOWTIME_DETACH_WARN {0}" -f $_.Exception.Message)
+  }
+  if (-not $started) {
+    try {
+      $p = Start-Process -FilePath $node.Source `
+        -ArgumentList @($ServerJs) `
+        -WorkingDirectory $SkillRoot `
+        -WindowStyle Hidden `
+        -PassThru
+      if ($p) {
+        Write-Output "SHOWTIME_PID=$($p.Id)"
+        Write-Output 'SHOWTIME_DETACH=Start-Process'
+      }
+    } catch {
+      $psi = New-Object System.Diagnostics.ProcessStartInfo
+      $psi.FileName = $node.Source
+      $psi.Arguments = "`"$ServerJs`""
+      $psi.WorkingDirectory = $SkillRoot
+      $psi.UseShellExecute = $true
+      $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+      [void][System.Diagnostics.Process]::Start($psi)
+      Write-Output 'SHOWTIME_DETACH=UseShellExecute'
+    }
   }
 
   for ($i = 0; $i -lt 50; $i++) {
