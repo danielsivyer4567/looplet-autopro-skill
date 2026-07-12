@@ -174,7 +174,8 @@ if (Test-Path -LiteralPath $sessionStatePath) {
 
 if ($allFlags.Count -and $priorState -and $priorState.ledgerHash -and $priorState.ledgerHash -ne $ledgerHash) {
   Write-Output ("NEW_LEDGER_DETECTED oldHash={0} oldTitle={1} newHash={2} newTitle={3}" -f $priorState.ledgerHash, $priorState.ledgerTitle, $ledgerHash, $ledgerTitle)
-  $runners = @(Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" -ErrorAction SilentlyContinue |
+  $runners = @(Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" `
+    -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
     Where-Object {
       $_.CommandLine -and
       $_.CommandLine -match 'autopro-runner\.ps1' -and
@@ -209,7 +210,8 @@ if ($allFlags.Count -and $priorState -and $priorState.ledgerHash -and $priorStat
 # The old behavior warned and launched a second runner anyway — that is exactly
 # how three runners ended up racing one ledger. Refuse instead.
 if ($allFlags.Count) {
-  $liveRunners = @(Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" -ErrorAction SilentlyContinue |
+  $liveRunners = @(Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" `
+    -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -and $_.CommandLine -match 'autopro-runner\.ps1' -and $_.CommandLine -like "*$Root*" })
   if ($liveRunners.Count) {
     $allFlags | ForEach-Object { Write-Output ("EXISTING_FLAG={0}" -f $_.Name) }
@@ -385,13 +387,15 @@ if (-not $NoShowTime) {
 
 # Runner scan is informational here; different-ledger stale cleanup above uses scoped stop-autopro.
 try {
-  $runners = Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" -ErrorAction SilentlyContinue |
+  # OperationTimeoutSec: bare Get-CimInstance Win32_Process can hang for minutes on busy WMI.
+  $runners = Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" `
+    -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
     Where-Object {
       $_.CommandLine -and
       $_.CommandLine -match 'autopro-runner\.ps1' -and
       $_.CommandLine -like "*$Root*"
     }
-  foreach ($rp in $runners) {
+  foreach ($rp in @($runners)) {
     try {
       $p = Get-Process -Id $rp.ProcessId -ErrorAction Stop
       $ageMin = ((Get-Date) - $p.StartTime).TotalMinutes
@@ -444,10 +448,14 @@ if (-not $NoShowTime) {
     Write-Output "preflight> board preflight warn: $($_.Exception.Message)"
   }
 
-  # Ensure Show Time server + register (do not open browser yet — discovery below)
+  # Ensure Show Time server + register (do not open browser yet — discovery below).
+  # OpenRegister: risk switches already accepted — skip interactive join wait so
+  # prompt-and-play arms do not sit on "Approve on board" for 20s+ (and never hang).
+  Write-Output 'Preflight: register lane (OpenRegister · unattended risk accepted)…'
   $regArgs = @(
     '-NoProfile', '-File', $Register,
     '-Action', 'register',
+    '-OpenRegister',
     '-SessionId', $sessionId,
     '-RepoDir', $workDir,
     '-Root', $Root,

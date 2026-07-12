@@ -101,7 +101,8 @@ foreach ($r in $roots) {
 }
 
 # 2) Find runners matching those roots (or any runner if -All)
-$runners = Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" -ErrorAction SilentlyContinue |
+$runners = Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" `
+  -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
   Where-Object { $_.CommandLine -and $_.CommandLine -match 'autopro-runner\.ps1' }
 
 $killedRunners = @()
@@ -153,10 +154,19 @@ if (-not $KeepClaude) {
     }
   }
 
-  $workers = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-    Where-Object { Test-IsWorkerProc $_ }
+  # Prefer filtered queries — unfiltered Win32_Process enumerations hang on busy machines.
+  $workers = @(
+    Get-CimInstance Win32_Process -Filter "Name='claude.exe' OR Name='node.exe' OR Name='grok.exe' OR Name='ollama.exe' OR Name='codex.exe'" `
+      -OperationTimeoutSec 8 -ErrorAction SilentlyContinue
+  ) + @(
+    Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" `
+      -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
+      Where-Object { $_.CommandLine -and (Test-IsWorkerProc $_) }
+  )
+  $workers = @($workers | Where-Object { $_ -and (Test-IsWorkerProc $_) } | Sort-Object ProcessId -Unique)
   foreach ($c in $workers) {
-    $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($c.ParentProcessId)" -ErrorAction SilentlyContinue
+    $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($c.ParentProcessId)" `
+      -OperationTimeoutSec 3 -ErrorAction SilentlyContinue
     $orphan = -not $parent
     $parentIsRunner = $parent -and $parent.CommandLine -match 'autopro-runner' -and (Test-ProcMatch $parent)
     $safeOrphanMatch = $All
@@ -200,12 +210,12 @@ try {
 
 # 5) Verify
 Start-Sleep -Milliseconds 400
-$stillRunners = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+$stillRunners = @(Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" `
+  -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
   Where-Object { $_.CommandLine -and $_.CommandLine -match 'autopro-runner\.ps1' -and (Test-ProcMatch $_) })
-$stillWorkers = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-  Where-Object {
-    (Test-IsWorkerProc $_) -and (Test-ClaudeMatch $_)
-  })
+$stillWorkers = @(Get-CimInstance Win32_Process -Filter "Name='claude.exe' OR Name='node.exe' OR Name='grok.exe' OR Name='ollama.exe'" `
+  -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
+  Where-Object { (Test-IsWorkerProc $_) -and (Test-ClaudeMatch $_) })
 
 Say ''
 Say "FLAGS_REMOVED=$flagsRemoved"
