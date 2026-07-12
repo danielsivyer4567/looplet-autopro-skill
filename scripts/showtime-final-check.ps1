@@ -72,3 +72,52 @@ function Test-FinalCheckGreen {
   }
   return $false
 }
+
+<#
+  Resolve-IndependentFinalGate — what command proves the epic before merge.
+  Priority: env AUTOPRO_FINAL_CHECK_CMD → scripts/final-check.ps1 → package.json scripts.gate.
+  Returns: @{ Kind = 'env'|'script'|'npm-gate'|'none'; Display = string; Command = string; Args = string[] }
+#>
+function Resolve-IndependentFinalGate {
+  param([Parameter(Mandatory = $true)][string]$WorkDir)
+
+  $none = @{ Kind = 'none'; Display = 'none'; Command = ''; Args = @() }
+  if (-not $WorkDir -or -not (Test-Path -LiteralPath $WorkDir)) { return $none }
+
+  $envCmd = [string]$env:AUTOPRO_FINAL_CHECK_CMD
+  if ($envCmd -and $envCmd.Trim()) {
+    return @{
+      Kind    = 'env'
+      Display = "AUTOPRO_FINAL_CHECK_CMD=$($envCmd.Trim())"
+      Command = $envCmd.Trim()
+      Args    = @()
+    }
+  }
+
+  $finalPs1 = Join-Path $WorkDir 'scripts\final-check.ps1'
+  if (Test-Path -LiteralPath $finalPs1) {
+    return @{
+      Kind    = 'script'
+      Display = 'scripts/final-check.ps1'
+      Command = 'pwsh'
+      Args    = @('-NoProfile', '-File', $finalPs1)
+    }
+  }
+
+  $pkg = Join-Path $WorkDir 'package.json'
+  if (Test-Path -LiteralPath $pkg) {
+    try {
+      $raw = Get-Content -LiteralPath $pkg -Raw -ErrorAction Stop
+      if ($raw -match '"gate"\s*:\s*"') {
+        return @{
+          Kind    = 'npm-gate'
+          Display = 'npm run gate'
+          Command = 'npm'
+          Args    = @('run', 'gate')
+        }
+      }
+    } catch {}
+  }
+
+  return $none
+}

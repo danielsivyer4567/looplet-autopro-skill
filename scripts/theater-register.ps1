@@ -4,7 +4,7 @@
 #>
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('ensure', 'register', 'heartbeat', 'complete', 'unregister', 'url')]
+  [ValidateSet('ensure', 'register', 'request-join', 'join-status', 'heartbeat', 'complete', 'unregister', 'url')]
   [string]$Action,
 
   [string]$SessionId = '',
@@ -23,7 +23,10 @@ param(
   [switch]$Progress,
   [switch]$SliceComplete,
   [switch]$OpenBrowser,
-  [int]$StallAfterSec = 900
+  [int]$StallAfterSec = 900,
+  [int]$WaitSec = 20,
+  [switch]$OpenRegister,
+  [switch]$SkipWait
 )
 
 $ErrorActionPreference = 'Stop'
@@ -165,7 +168,150 @@ switch ($Action) {
     Write-Output $u
     break
   }
+  'request-join' {
+    if (-not $SessionId) { throw 'SessionId required for request-join' }
+    $u = Start-ShowTimeServer
+    if (-not $LedgerPath -and $RepoDir) {
+      $LedgerPath = Join-Path $RepoDir '.claude\scratch\ledger.md'
+    }
+    if (-not $LogPath -and $Root) {
+      $LogPath = Join-Path $Root '.claude\scratch\autopro.log'
+    }
+    if (-not $Branch) { $Branch = Get-GitBranch $RepoDir }
+    if (-not $Branch) { $Branch = Get-GitBranch (Split-Path $RepoDir -Parent) }
+    $resolvedRepo = Get-RepoIdFromPath $RepoDir
+    if (-not $resolvedRepo) { throw 'repo name required for request-join (real folder, not sess id / worktree leaf)' }
+    if (-not $Branch) { throw 'branch required for request-join (join gate)' }
+    $body = @{
+      sessionId   = $SessionId
+      repoId      = $resolvedRepo
+      repoPath    = $RepoDir
+      branch      = $Branch
+      status      = $Status
+      pid         = $RunnerPid
+      ledgerPath  = $LedgerPath
+      ledgerHash  = $LedgerHash
+      ledgerTitle = $LedgerTitle
+      logPath     = $LogPath
+      ledgerKey   = $LedgerHash
+      primaryRepoPath = $(if ($Root) { $Root } else { $RepoDir })
+    }
+    $result = Invoke-ShowTimeJson -Method POST -Url "$u/api/join-requests" -Body $body
+    $status = [string]$result.status
+    $joinId = $null
+    if ($result.request -and $result.request.id) { $joinId = [string]$result.request.id }
+
+    Write-Output "JOIN_STATUS=$status"
+    if ($joinId) { Write-Output "JOIN_ID=$joinId" }
+    Write-Output "SHOWTIME_URL=$u/"
+    Write-Output "SESSION_ID=$SessionId"
+    Write-Output "BOARD_APPROVE=Open http://127.0.0.1:8770/ (or Looplet Board) and Approve"
+
+    if ($status -eq 'already_on_board' -or $status -eq 'approved') {
+      if ($OpenBrowser) { Open-BoardUrl "$u/" }
+      if ($result.session) { Write-Output ($result.session | ConvertTo-Json -Depth 6 -Compress) }
+      break
+    }
+    if ($status -eq 'denied') {
+      throw "Join denied by operator"
+    }
+
+    # Short wait only — never hang models for minutes
+    $wait = 20
+    if ($PSBoundParameters.ContainsKey('WaitSec')) { $wait = $WaitSec }
+    if ($SkipWait -or $wait -le 0) {
+      Write-Output 'JOIN_WAIT=skipped — pending operator approval; re-run -Action join-status later'
+      break
+    }
+    Write-Output "JOIN_WAIT=up to ${wait}s for operator Approve (2FA-style gate)"
+    $deadline = (Get-Date).AddSeconds($wait)
+    while ((Get-Date) -lt $deadline) {
+      if (-not $joinId) { break }
+      Start-Sleep -Seconds 2
+      try {
+        $poll = Invoke-ShowTimeJson -Method GET -Url "$u/api/join-requests/$joinId"
+        $st = [string]$poll.status
+        if ($st -eq 'approved') {
+          Write-Output 'JOIN_STATUS=approved'
+          if ($poll.session) { Write-Output ($poll.session | ConvertTo-Json -Depth 6 -Compress) }
+          if ($OpenBrowser) { Open-BoardUrl "$u/" }
+          break
+        }
+        if ($st -eq 'denied') { throw 'Join denied by operator' }
+      } catch {
+        if ("$($_.Exception.Message)" -match 'denied') { throw }
+      }
+    }
+    if ($joinId) {
+      try {
+        $final = Invoke-ShowTimeJson -Method GET -Url "$u/api/join-requests/$joinId"
+        if ([string]$final.status -eq 'pending') {
+          Write-Output 'JOIN_STATUS=pending'
+          Write-Output 'JOIN_HINT=Not approved yet. Exit cleanly — re-run join-status; do not poll for 10 minutes.'
+        }
+      } catch {}
+    }
+    break
+  }
+  'join-status' {
+    $u = Get-ShowTimeBaseUrl
+    if (-not $u) { throw 'Show Time server not running' }
+    if ($SessionId) {
+      $all = Invoke-ShowTimeJson -Method GET -Url "$u/api/join-requests"
+      $mine = @($all.requests | Where-Object { $_.sessionId -eq $SessionId } | Select-Object -Last 1)
+      if (-not $mine -or -not $mine.Count) {
+        try {
+          $sess = Invoke-ShowTimeJson -Method GET -Url "$u/api/sessions"
+          $hit = @($sess.sessions | Where-Object { $_.sessionId -eq $SessionId } | Select-Object -First 1)
+          if ($hit -and $hit.Count) {
+            Write-Output 'JOIN_STATUS=already_on_board'
+            Write-Output ($hit[0] | ConvertTo-Json -Depth 4 -Compress)
+            break
+          }
+        } catch {}
+        Write-Output 'JOIN_STATUS=not_found'
+        Write-Output 'JOIN_HINT=No join request and no board lane yet for this SessionId. Run -Action request-join (or register) to place a pending request; if you already had a lane, request-join rematerializes after Approve.'
+        break
+      }
+      $j = $mine[0]
+      Write-Output ("JOIN_STATUS={0}" -f $j.status)
+      Write-Output ("JOIN_ID={0}" -f $j.id)
+      try {
+        $poll = Invoke-ShowTimeJson -Method GET -Url "$u/api/join-requests/$($j.id)"
+        if ($poll.session) { Write-Output ($poll.session | ConvertTo-Json -Depth 6 -Compress) }
+      } catch {}
+      break
+    }
+    $all = Invoke-ShowTimeJson -Method GET -Url "$u/api/join-requests"
+    Write-Output ($all | ConvertTo-Json -Depth 6 -Compress)
+    break
+  }
   'register' {
+    # Default = request-join (operator must Approve). -OpenRegister = legacy direct POST.
+    if (-not $OpenRegister) {
+      # Re-enter request-join via recursive call of the same script
+      $argList = @(
+        '-NoProfile', '-File', $PSCommandPath,
+        '-Action', 'request-join',
+        '-SessionId', $SessionId,
+        '-RepoDir', $RepoDir,
+        '-Root', $Root,
+        '-RepoId', $RepoId,
+        '-Branch', $Branch,
+        '-Status', $Status,
+        '-RunnerPid', $RunnerPid,
+        '-LedgerPath', $LedgerPath,
+        '-LedgerHash', $LedgerHash,
+        '-LedgerTitle', $LedgerTitle,
+        '-LogPath', $LogPath,
+        '-StallAfterSec', $StallAfterSec,
+        '-WaitSec', $(if ($PSBoundParameters.ContainsKey('WaitSec')) { $WaitSec } else { 20 })
+      )
+      if ($OpenBrowser) { $argList += '-OpenBrowser' }
+      if ($SkipWait) { $argList += '-SkipWait' }
+      & pwsh @argList
+      break
+    }
     if (-not $SessionId) { throw 'SessionId required for register (join gate)' }
     $u = Start-ShowTimeServer
     if (-not $LedgerPath -and $RepoDir) {
@@ -190,6 +336,8 @@ switch ($Action) {
       ledgerHash  = $LedgerHash
       ledgerTitle = $LedgerTitle
       logPath     = $LogPath
+      ledgerKey   = $LedgerHash
+      primaryRepoPath = $(if ($Root) { $Root } else { $RepoDir })
       alarms      = @{
         stallAfterSec    = $StallAfterSec
         completeEnabled  = $true
@@ -223,8 +371,44 @@ switch ($Action) {
     if ($HandoverText) { $body.handoverText = $HandoverText }
     if ($Progress) { $body.progress = $true }
     if ($SliceComplete) { $body.sliceComplete = $true }
-    $result = Invoke-ShowTimeJson -Method POST -Url "$u/api/sessions/$SessionId/heartbeat" -Body $body
-    Write-Output ($result.session | ConvertTo-Json -Depth 6 -Compress)
+    try {
+      $result = Invoke-ShowTimeJson -Method POST -Url "$u/api/sessions/$SessionId/heartbeat" -Body $body
+      Write-Output ($result.session | ConvertTo-Json -Depth 6 -Compress)
+    } catch {
+      $msg = $_.Exception.Message
+      if ($msg -match '404|not found' -or ($_.ErrorDetails.Message -match 'not found|SESSION_NOT_FOUND')) {
+        Write-Output "JOIN_HINT=Register hit a transient 'not found' — re-registering the session onto the shared board"
+        # request-join rematerializes if previously approved; else leaves pending
+        $rjArgs = @(
+          '-NoProfile', '-File', $PSCommandPath,
+          '-Action', 'request-join',
+          '-SessionId', $SessionId,
+          '-RepoDir', $RepoDir,
+          '-Root', $Root,
+          '-RepoId', $RepoId,
+          '-Branch', $Branch,
+          '-Status', $Status,
+          '-RunnerPid', $RunnerPid,
+          '-LedgerPath', $LedgerPath,
+          '-LedgerHash', $LedgerHash,
+          '-LedgerTitle', $LedgerTitle,
+          '-LogPath', $LogPath,
+          '-WaitSec', 0,
+          '-SkipWait'
+        )
+        & pwsh @rjArgs
+        try {
+          $result = Invoke-ShowTimeJson -Method POST -Url "$u/api/sessions/$SessionId/heartbeat" -Body $body
+          Write-Output ($result.session | ConvertTo-Json -Depth 6 -Compress)
+        } catch {
+          Write-Output 'JOIN_STATUS=pending_or_missing'
+          Write-Output "JOIN_HINT=Still not on board after re-register. Operator may need to Approve a join request."
+          throw
+        }
+      } else {
+        throw
+      }
+    }
     break
   }
   'complete' {

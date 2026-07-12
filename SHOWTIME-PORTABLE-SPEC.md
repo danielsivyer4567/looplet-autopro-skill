@@ -89,18 +89,33 @@ server still binds loopback and nothing about the local contract changes.
 
 ---
 
-## 3. MULTI-REPO JOIN — one canvas, N repos as lanes
+## 3. MULTI-REPO JOIN — party handshake (one ORCH per ledger)
 
-- **Host repo** runs the server, writes the beacon, and IS the ORCHESTRATOR
-  node on the canvas.
-- **Each joining repo** POSTs `/api/sessions` with its own `repoId`, `repoPath`,
-  `branch`, and ledger info. The server assigns it the next free lane
-  (`nextLane()` — SA-1, SA-2, … never colliding) and it appears as its own lane.
-- **6 people = 6 lanes, zero URLs shared.** Each ran find-or-attach → all joined
-  the same board. The operator addresses only ORCH; lanes heartbeat upward.
+The board is a **shared venue**, not a single company desk.
 
-A lane's ledger slices (SC-01, SC-02, …) become the small **slice rows** shown
-under that lane. That is the unit the worker-orbit animates around (§4).
+```
+[ ORCH · repo A · ledger X ]     [ ORCH · repo B · ledger Y ]
+         │                                │
+    SA-1   SA-2                      SA-1   SA-2
+```
+
+**Party rule (non-negotiable):**
+
+1. **Guest = fleet** — one home repo + **one ledger** + **one ORCH** + workers under that ORCH only.
+2. **You cannot park six ledgers under one orchestrator.** Each ledger that joins brings its own manager.
+3. **Handshake** — `request-join` / arm ensures a fleet; operator Approves; workers attach with `fleetId`.
+4. **Same ledger again** → attach existing fleet (no twin ORCH).
+5. **Nudge / notes / steers** target that fleet and also write  
+   `<primaryRepoPath>/.claude/scratch/showtime-inbox.jsonl`.
+6. **Leave** — finish check → commit policy → handover → clear fleet (`POST /api/fleets/:id/leave`).
+
+- **Host process** only runs `theater-server` (beacon + canvas). It is **not** every guest’s ORCH.
+- **SA-N is local to a fleet** (each fleet can have SA-1). Global SA-1…SA-6 across repos is the old bug.
+- API: `GET/POST /api/fleets`, sessions include `fleetId` + `fleets[]` rollup.
+- Full contract: `references/FLEET-HANDSHAKE.md`.
+
+A worker’s ledger slices (SC-01, SC-02, …) remain the small **slice rows** under that
+worker card. That is the unit the worker-orbit animates around (§4).
 
 ---
 

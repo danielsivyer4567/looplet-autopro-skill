@@ -15,7 +15,17 @@ param(
   [string]$SessionId = '',
   [switch]$NoShowTime,
   [switch]$NoWorktree,
-  [switch]$PushOnFinish
+  [switch]$PushOnFinish,
+  # Only set by launch-showtime after risk ack — never default-on for raw runner invokes
+  [switch]$SkipPermissions,
+  # Escape hatch: skip independent gate (npm run gate / final-check.ps1 / env cmd)
+  [switch]$AllowModelOnlyFinalCheck,
+  # Default-on fresh reviewer after every work slice. UI diffs must produce a
+  # real Playwright screenshot and zero console/page errors before advancing.
+  [switch]$NoSliceVerifier,
+  [string]$VerifierModel = '',
+  [ValidateRange(0, 3)]
+  [int]$VerifierRepairAttempts = 1
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,11 +40,13 @@ $RegisterPs1 = Join-Path $PSScriptRoot 'theater-register.ps1'
 $WorktreePs1 = Join-Path $PSScriptRoot 'showtime-worktree.ps1'
 $CommitPs1 = Join-Path $PSScriptRoot 'showtime-scoped-commit.ps1'
 $StatusPs1 = Join-Path $PSScriptRoot 'showtime-status.ps1'
+$SliceVerifierPs1 = Join-Path $PSScriptRoot 'showtime-slice-verifier.ps1'
 $StateRoot = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater'
 $PortFile = Join-Path $StateRoot 'server.port'
 
 # Merge gate lives in one place, shared with test-showtime.ps1
 . (Join-Path $PSScriptRoot 'showtime-final-check.ps1')
+if (Test-Path -LiteralPath $SliceVerifierPs1) { . $SliceVerifierPs1 }
 
 # Code workdir = isolated worktree when available
 $WorkDir = if ($WorktreeDir -and (Test-Path -LiteralPath $WorktreeDir)) { $WorktreeDir } else { $RepoDir }
@@ -42,9 +54,11 @@ $ledger = if (Test-Path (Join-Path $WorkDir '.claude\scratch\ledger.md')) {
   Join-Path $WorkDir '.claude\scratch\ledger.md'
 } else { $ledgerPrimary }
 
-# Accumulated session stats
+# Accumulated session stats (model is credit-critical on multi-repo fleets)
 $script:Stats = @{
-  model = if ($Model) { $Model } else { 'default' }
+  model = if ($Model) { $Model } else { '' }
+  verifierModel = if ($VerifierModel) { $VerifierModel } else { '' }
+  modelSource = if ($Model) { 'flag' } else { 'unresolved' }
   measured = $false
   input = 0
   output = 0
@@ -65,6 +79,7 @@ $script:Stats = @{
 if (-not $SessionId) {
   $SessionId = 'sess_' + [guid]::NewGuid().ToString('N').Substring(0, 12)
 }
+$verificationRoot = Join-Path $scratch "autopro-verification\$SessionId"
 
 # Per-session kill switch: each runner owns autopro-on.<sessionId>, so one lane
 # finishing (or being stopped) can never disarm its siblings. Legacy bare
@@ -96,6 +111,29 @@ function Log($msg) {
   $line = '[{0}] {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $msg
   Add-Content -LiteralPath $log -Value $line
   Write-Output $line
+}
+
+function Resolve-ClaudeExe {
+  <#
+    Prefer a real claude.exe. Never return npm's claude.ps1 / claude.cmd shims —
+    those collapse PowerShell argv into one bogus option
+    (log: unknown option '- work --verbose --dangerously-skip-permissions …').
+  #>
+  $candidates = @(
+    (Join-Path $env:USERPROFILE '.local\bin\claude.exe'),
+    (Join-Path $env:APPDATA 'npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe'),
+    (Join-Path $env:LOCALAPPDATA 'npm\claude.exe')
+  )
+  foreach ($cand in $candidates) {
+    if ($cand -and (Test-Path -LiteralPath $cand) -and ($cand -match '\.exe$')) {
+      return $cand
+    }
+  }
+  $cmd = Get-Command claude.exe -ErrorAction SilentlyContinue
+  if ($cmd -and $cmd.Source -and ($cmd.Source -match '\.exe$') -and (Test-Path -LiteralPath $cmd.Source)) {
+    return $cmd.Source
+  }
+  return $null
 }
 
 function Get-ShowTimeUrl {
@@ -146,8 +184,12 @@ function Build-StatsPayload {
   $tpm = [Math]::Round($tps * 60, 1)
   $lpt = if ($tpm -gt 0) { [Math]::Round($script:Stats.linesAdded / $tpm, 4) } else { 0 }
   $fpt = if ($tpm -gt 0) { [Math]::Round($script:Stats.filesCreated / $tpm, 4) } else { 0 }
+  $modelLabel = if ($script:Stats.model) { [string]$script:Stats.model } else { 'unknown (cli-default)' }
+  $verLabel = if ($script:Stats.verifierModel) { [string]$script:Stats.verifierModel } else { $modelLabel }
   return @{
-    model    = $script:Stats.model
+    model          = $modelLabel
+    modelSource    = [string]$script:Stats.modelSource
+    verifierModel  = $verLabel
     measured = [bool]$script:Stats.measured
     tokens   = @{
       input         = [int]$script:Stats.input
@@ -209,32 +251,15 @@ function Invoke-ShowTime {
   if ($HandoverText) { $body.handoverText = $HandoverText }
 
   if ($Action -eq 'register') {
-    if (-not $SessionId) { throw 'SessionId required for Show Time register (join gate)' }
     $body.sessionId = $SessionId
-    # Real repo name from primary RepoDir — never worktree sess_* leaf
-    $repoName = [IO.Path]::GetFileName($RepoDir.TrimEnd('\', '/'))
-    if ($repoName -match '^sess_' -or $repoName -eq 'repo' -or -not $repoName) {
-      $parent = Split-Path $RepoDir -Parent
-      if ($parent) { $repoName = [IO.Path]::GetFileName($parent.TrimEnd('\', '/')) }
-    }
-    if ($WorkDir -match '(?i)[\\/]\.worktrees-showtime[\\/]') {
-      $primary = ($WorkDir -replace '(?i)[\\/]\.worktrees-showtime[\\/].*$', '')
-      $rn = [IO.Path]::GetFileName($primary.TrimEnd('\', '/'))
-      if ($rn) { $repoName = $rn }
-    }
-    if (-not $repoName -or $repoName -eq 'repo' -or $repoName -match '^sess_') {
-      throw "repo name required for register (got '$repoName')"
-    }
-    $body.repoId = $repoName
+    $body.repoId = [IO.Path]::GetFileName($RepoDir.TrimEnd('\', '/'))
     $body.repoPath = $WorkDir
+    $body.primaryRepo = $RepoDir
     try {
       Push-Location $WorkDir
       $body.branch = ("$(git rev-parse --abbrev-ref HEAD 2>$null)").Trim()
     } catch { $body.branch = '' }
     finally { Pop-Location }
-    if (-not $body.branch -or $body.branch -eq 'HEAD') {
-      throw 'branch required for Show Time register (join gate)'
-    }
     $null = Invoke-ShowTimeApi -Method POST -Path '/api/sessions' -Body $body
     return
   }
@@ -266,35 +291,51 @@ function Get-Counts {
   }
 }
 
-function Get-SteersText {
-  $r = Invoke-ShowTimeApi -Method POST -Path "/api/sessions/$SessionId/consume-steers" -Body @{}
-  if (-not $r -or -not $r.steers) { return '' }
-  $parts = @()
-  foreach ($st in $r.steers) {
-    $parts += ("OPERATOR STEER ({0}): {1}" -f $st.target, $st.text)
+function Get-NextSliceInfo {
+  if (-not (Test-Path -LiteralPath $ledger)) {
+    return [pscustomobject]@{ Id = 'slice'; Title = 'unknown slice' }
   }
-  if ($parts.Count -eq 0) { return '' }
-  return ($parts -join "`n") + "`n`n"
+  $raw = Get-Content -LiteralPath $ledger -Raw
+  $id = '(?:SC-\d+|SD-[\w-]+|H\d+|P\d+[-\w]*)'
+  $m = [regex]::Match($raw, "(?m)^##\s+($id)\s+(?:[—–-]\s*)?(.+?)\s+\[(pending|in-progress)\]\s*$")
+  if (-not $m.Success) {
+    return [pscustomobject]@{ Id = 'slice'; Title = 'next ledger slice' }
+  }
+  return [pscustomobject]@{
+    Id = $m.Groups[1].Value.Trim()
+    Title = $m.Groups[2].Value.Trim()
+  }
 }
 
-function Sync-LedgerToPrimary {
+function Get-SteersText {
+  # Must return a pure [string]. Log() Write-Outputs to the pipeline — if we call
+  # Log without capturing, the caller gets Object[] and Invoke-ClaudeProcess -Prompt
+  # throws "Cannot convert value to type System.String" (killed SC-65 arm 2026-07-12).
+  $r = Invoke-ShowTimeApi -Method POST -Path "/api/sessions/$SessionId/consume-steers" -Body @{}
+  if (-not $r -or -not $r.steers) { return [string]'' }
+  $parts = [System.Collections.Generic.List[string]]::new()
+  foreach ($st in @($r.steers)) {
+    $kind = if ($st.kind) { [string]$st.kind } else { 'steer' }
+    $label = switch ($kind.ToLowerInvariant()) {
+      'nudge' { 'OPERATOR NUDGE' }
+      'answer' { 'OPERATOR ANSWER' }
+      'message' { 'OPERATOR MESSAGE' }
+      default { 'OPERATOR STEER' }
+    }
+    $target = if ($st.target) { [string]$st.target } else { 'next' }
+    $text = if ($null -eq $st.text) { '' } else { [string]$st.text }
+    [void]$parts.Add(("{0} ({1}): {2}" -f $label, $target, $text))
+  }
+  if ($parts.Count -eq 0) { return [string]'' }
+  $null = Log ("steers: consumed {0} message(s) for next claude -p" -f $parts.Count)
+  # Clear one-shot nudge flag if present
   try {
-    if ($ledger -ne $ledgerPrimary -and (Test-Path -LiteralPath $ledger)) {
-      $destDir = Split-Path $ledgerPrimary -Parent
-      New-Item -ItemType Directory -Force -Path $destDir | Out-Null
-      Copy-Item -LiteralPath $ledger -Destination $ledgerPrimary -Force
+    $nudgeFlag = Join-Path $env:USERPROFILE ".claude\scratch\autopro-theater\steer\${SessionId}.nudge"
+    if (Test-Path -LiteralPath $nudgeFlag) {
+      Remove-Item -LiteralPath $nudgeFlag -Force -ErrorAction SilentlyContinue
     }
   } catch {}
-}
-
-function Sync-LedgerToWork {
-  try {
-    if ($ledger -ne $ledgerPrimary -and (Test-Path -LiteralPath $ledgerPrimary)) {
-      $destDir = Split-Path $ledger -Parent
-      New-Item -ItemType Directory -Force -Path $destDir | Out-Null
-      Copy-Item -LiteralPath $ledgerPrimary -Destination $ledger -Force
-    }
-  } catch {}
+  return [string](($parts -join "`n") + "`n`n")
 }
 
 function Invoke-ScopedCommit([string]$msg) {
@@ -334,7 +375,7 @@ function Invoke-StatusLog {
       '-RepoDir', $RepoDir,
       '-Action', $Action,
       '-SessionId', $SessionId,
-      '-LedgerPath', $ledgerPrimary,
+      '-LedgerPath', $ledger,
       '-MergeTarget', $MergeTarget,
       '-WorktreeDir', $WorkDir
     )
@@ -430,11 +471,28 @@ function Get-GitDelta([string]$startSha) {
   return $result
 }
 
+function Resolve-WorkerModelLabel {
+  # Prefer explicit -Model, then env overrides Claude Code commonly uses, then
+  # a short claude probe. Never silently label as "default" on the board.
+  if ($Model -and $Model.Trim()) {
+    return [pscustomobject]@{ Model = $Model.Trim(); Source = 'flag' }
+  }
+  foreach ($envName in @('ANTHROPIC_MODEL', 'CLAUDE_MODEL', 'CLAUDE_CODE_MODEL')) {
+    $v = [string][Environment]::GetEnvironmentVariable($envName)
+    if ($v -and $v.Trim()) {
+      return [pscustomobject]@{ Model = $v.Trim(); Source = "env:$envName" }
+    }
+  }
+  # Last resort: leave empty until first JSON result fills model from Claude
+  return [pscustomobject]@{ Model = ''; Source = 'pending-claude-result' }
+}
+
 function Parse-UsageFromText([string]$text) {
   # JSON-first: `claude -p --output-format json` puts the truth in the result
   # object's usage block. The old first-regex-match approach missed cache
   # tokens entirely (~2/3 of real input) and ignored total_cost_usd.
   $in = 0; $out = 0; $cacheCreate = 0; $cacheRead = 0; $cost = 0.0; $measured = $false
+  $modelId = ''
   foreach ($line in ($text -split "`r?`n")) {
     $l = $line.Trim()
     # Runner log lines prefix claude stdout with "  | " — strip before probing.
@@ -443,6 +501,11 @@ function Parse-UsageFromText([string]$text) {
     $obj = $null
     try { $obj = $l | ConvertFrom-Json -ErrorAction Stop } catch { continue }
     foreach ($node in @($obj)) {
+      # Capture model id from any JSON event that carries it
+      if (-not $modelId) {
+        if ($node.model) { $modelId = [string]$node.model }
+        elseif ($node.message -and $node.message.model) { $modelId = [string]$node.message.model }
+      }
       if ($node.type -ne 'result' -or $null -eq $node.usage) { continue }
       $u = $node.usage
       $in = [int]($u.input_tokens ?? 0)
@@ -450,6 +513,7 @@ function Parse-UsageFromText([string]$text) {
       $cacheCreate = [int]($u.cache_creation_input_tokens ?? 0)
       $cacheRead = [int]($u.cache_read_input_tokens ?? 0)
       if ($null -ne $node.total_cost_usd) { $cost = [double]$node.total_cost_usd }
+      if ($node.model) { $modelId = [string]$node.model }
       $measured = $true
     }
   }
@@ -460,6 +524,7 @@ function Parse-UsageFromText([string]$text) {
     if ($text -match '"cache_read_input_tokens"\s*:\s*(\d+)') { $cacheRead = [int]$Matches[1] }
     if ($text -match '"total_cost_usd"\s*:\s*([0-9.]+)') { $cost = [double]$Matches[1] }
   }
+  if (-not $modelId -and $text -match '"model"\s*:\s*"([^"]+)"') { $modelId = $Matches[1] }
   if (-not $measured) {
     $in = [Math]::Max(1, [int]($text.Length / 4))
     $out = [Math]::Max(1, [int]($text.Length / 8))
@@ -467,6 +532,7 @@ function Parse-UsageFromText([string]$text) {
   return @{
     input = $in; output = $out; measured = $measured
     cacheCreate = $cacheCreate; cacheRead = $cacheRead; costUsd = $cost
+    model = $modelId
   }
 }
 
@@ -475,8 +541,209 @@ function Get-RecentLogLines([int]$Count = 80) {
   return @(Get-Content -LiteralPath $log -Tail $Count -ErrorAction SilentlyContinue)
 }
 
+function Get-TrackedWorktreeStatus {
+  try {
+    Push-Location -LiteralPath $WorkDir
+    return (@(& git status --porcelain --untracked-files=no 2>$null) -join "`n")
+  } catch { return '' }
+  finally { Pop-Location }
+}
+
+function Get-ChangedFilesSince([string]$StartSha) {
+  if (-not $StartSha) { return @() }
+  try {
+    Push-Location -LiteralPath $WorkDir
+    return @(& git diff --name-only "$StartSha..HEAD" 2>$null | Where-Object { $_ })
+  } catch { return @() }
+  finally { Pop-Location }
+}
+
+function Invoke-ClaudeProcess {
+  param(
+    [Parameter(Mandatory = $true)][string]$Prompt,
+    [string]$ModelName = '',
+    [string]$LogPrefix = '  | ',
+    [string]$HeartbeatLabel = 'slice live'
+  )
+
+  if (-not $SkipPermissions) {
+    throw 'REFUSE: detached claude process requires -SkipPermissions'
+  }
+  $claudeExe = Resolve-ClaudeExe
+  if (-not $claudeExe) {
+    throw 'claude.exe not found (need Claude Code CLI binary — not only claude.cmd/claude.ps1)'
+  }
+  if ($claudeExe -match '\.(ps1|cmd)$') {
+    throw "REFUSE: resolved claude path is a shim ($claudeExe) — use real .exe"
+  }
+
+  $psi = [System.Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = $claudeExe
+  $psi.WorkingDirectory = $WorkDir
+  $psi.UseShellExecute = $false
+  $psi.CreateNoWindow = $true
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  if ($ModelName) {
+    [void]$psi.ArgumentList.Add('--model')
+    [void]$psi.ArgumentList.Add($ModelName)
+  }
+  foreach ($arg in @('--verbose', '--dangerously-skip-permissions', '--output-format', 'json', '-p', $Prompt)) {
+    [void]$psi.ArgumentList.Add($arg)
+  }
+
+  Log ("  claudeExe={0}" -f $claudeExe)
+  $proc = [System.Diagnostics.Process]::new()
+  $proc.StartInfo = $psi
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  try {
+    if (-not $proc.Start()) { throw 'claude process failed to start' }
+    # Drain both pipes asynchronously so a verbose child cannot deadlock while
+    # the parent independently pulses Show Time on wall-clock time.
+    $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+    $stderrTask = $proc.StandardError.ReadToEndAsync()
+    $lastHb = [DateTime]::UtcNow
+    while (-not $proc.WaitForExit(1000)) {
+      $now = [DateTime]::UtcNow
+      if (($now - $lastHb).TotalSeconds -ge 45) {
+        $lastHb = $now
+        try {
+          Invoke-ShowTime -Action heartbeat -Status running -Progress -Sentinel ("{0} · {1:n0}s" -f $HeartbeatLabel, $sw.Elapsed.TotalSeconds)
+        } catch {}
+      }
+    }
+    $proc.WaitForExit()
+    $stdout = $stdoutTask.GetAwaiter().GetResult()
+    $stderr = $stderrTask.GetAwaiter().GetResult()
+    $parts = @()
+    if ($stdout) { $parts += $stdout.TrimEnd("`r", "`n") }
+    if ($stderr) { $parts += $stderr.TrimEnd("`r", "`n") }
+    $text = $parts -join "`n"
+    $lines = @($text -split "`r?`n" | Where-Object { $_ -ne '' })
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+      $line = [string]$lines[$i]
+      if ($i -lt 20 -or (($i + 1) % 50) -eq 0 -or $line.Length -lt 400) {
+        Log ("{0}{1}" -f $LogPrefix, $(if ($line.Length -gt 500) { $line.Substring(0, 500) + '…' } else { $line }))
+      }
+    }
+    return [pscustomobject]@{
+      Text = $text
+      ExitCode = $proc.ExitCode
+      Seconds = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
+      LineCount = $lines.Count
+    }
+  } finally {
+    $sw.Stop()
+    $proc.Dispose()
+  }
+}
+
+function Invoke-SliceVerification {
+  param(
+    [Parameter(Mandatory = $true)][AllowEmptyString()][string]$StartSha,
+    [Parameter(Mandatory = $true)][string]$SliceId,
+    [Parameter(Mandatory = $true)][string]$SliceTitle,
+    [int]$Attempt = 1
+  )
+
+  if ($NoSliceVerifier) {
+    return [pscustomobject]@{ Green = $true; Skipped = $true; UiChanged = $false; Text = 'slice verifier disabled'; ExitCode = 0; WorktreeChanged = $false }
+  }
+  if (-not $StartSha) {
+    return [pscustomobject]@{ Green = $false; Skipped = $false; UiChanged = $false; Text = 'missing slice start SHA'; ExitCode = 78; WorktreeChanged = $false }
+  }
+  if (-not (Test-Path -LiteralPath $SliceVerifierPs1) -or -not (Get-Command Test-SliceVerificationGreen -ErrorAction SilentlyContinue)) {
+    return [pscustomobject]@{ Green = $false; Skipped = $false; UiChanged = $false; Text = 'slice verifier policy helper missing'; ExitCode = 78; WorktreeChanged = $false }
+  }
+
+  $changedFiles = @(Get-ChangedFilesSince $StartSha)
+  $uiChanged = Test-AutoproUiChange $changedFiles
+  New-Item -ItemType Directory -Force -Path $verificationRoot | Out-Null
+  $safeId = ($SliceId -replace '[^a-zA-Z0-9._-]', '_')
+  $evidencePath = if ($uiChanged) { Join-Path $verificationRoot ("{0}-attempt-{1}.png" -f $safeId, $Attempt) } else { '' }
+  if ($evidencePath) { Remove-Item -LiteralPath $evidencePath -Force -ErrorAction SilentlyContinue }
+  $changedList = if ($changedFiles.Count) { (($changedFiles | Select-Object -First 120) -join "`n") } else { '(no committed files detected)' }
+  $uiText = if ($uiChanged) { 'true' } else { 'false' }
+  $evidenceText = if ($evidencePath) { $evidencePath } else { '(not required for a non-UI slice)' }
+
+  $prompt = @"
+You are AutoPro's independent post-slice verifier. You are a fresh session that
+comes AFTER the implementation worker. VERIFY ONLY: do not edit, format, commit,
+or rewrite any tracked file. Do not start another ledger slice.
+
+Slice: $SliceId — $SliceTitle
+Diff: $StartSha..HEAD
+UI_CHANGED=$uiText
+
+Changed files:
+$changedList
+
+Required work:
+1. Read the committed diff and the slice acceptance notes in .claude/scratch/ledger.md.
+2. Run focused deterministic tests, syntax/type checks, and security checks appropriate to the diff.
+3. If UI_CHANGED=true, you MUST use the repo's installed Playwright tooling in headless/background mode,
+   start or reuse the app/preview as needed, exercise the changed interaction, capture console errors and
+   page errors, and write a real screenshot to this exact path:
+   $evidenceText
+   Clean up only processes you started. Do not use the visible IDE chat UI.
+4. If UI_CHANGED=false, Playwright may be skipped only as skipped-non-ui.
+5. Be fail-closed. Missing dependencies, an unavailable preview, test failures, browser errors, or missing
+   screenshot evidence are RED, not assumptions.
+
+Finish with these exact machine-readable lines (plain text, one each):
+SLICE_VERIFY_STATUS=green|red
+PLAYWRIGHT_STATUS=green|red|skipped-non-ui
+CONSOLE_ERRORS=<integer>
+PAGE_ERRORS=<integer>
+PLAYWRIGHT_COMMAND=<actual command or skipped-non-ui>
+PLAYWRIGHT_EVIDENCE=$evidenceText
+
+Green is allowed only when every relevant check passed. Do not claim green from code inspection alone for UI work.
+"@
+
+  Log ("verify: spawn fresh reviewer for {0} attempt={1} ui={2} files={3}" -f $SliceId, $Attempt, $uiChanged, $changedFiles.Count)
+  Invoke-ShowTime -Action heartbeat -Status running -Progress -Sentinel ("Playwright verifier · {0} · attempt {1}" -f $SliceId, $Attempt)
+  $beforeStatus = Get-TrackedWorktreeStatus
+  $exitCode = 1
+  $verifyText = ''
+  $verifySeconds = 0
+  try {
+    $reviewModel = if ($VerifierModel) { $VerifierModel } else { $Model }
+    $processResult = Invoke-ClaudeProcess -Prompt $prompt -ModelName $reviewModel -LogPrefix '  verify| ' -HeartbeatLabel ("verifier live · {0}" -f $SliceId)
+    $verifyText = $processResult.Text
+    $verifySeconds = $processResult.Seconds
+    $exitCode = $processResult.ExitCode
+  } catch {
+    $verifyText = "VERIFIER_EXCEPTION=$($_.Exception.Message)"
+    Log ("  verify> exception: {0}" -f $_.Exception.Message)
+    $exitCode = 1
+  }
+  $afterStatus = Get-TrackedWorktreeStatus
+  $result = [pscustomobject]@{
+    Text = $verifyText
+    ExitCode = $exitCode
+    WorktreeChanged = ($beforeStatus -ne $afterStatus)
+    UiChanged = $uiChanged
+    EvidencePath = $evidencePath
+    ChangedFiles = $changedFiles
+    Seconds = $verifySeconds
+  }
+  $green = Test-SliceVerificationGreen -Result $result -UiChanged:$uiChanged -EvidencePath $evidencePath
+  $result | Add-Member -NotePropertyName Green -NotePropertyValue $green
+  $result | Add-Member -NotePropertyName Skipped -NotePropertyValue $false
+  Log ("verify: result slice={0} green={1} exit={2} worktreeChanged={3} evidence={4}" -f $SliceId, $green, $exitCode, $result.WorktreeChanged, $(if ($evidencePath) { $evidencePath } else { 'n/a' }))
+  Invoke-ShowTime -Action heartbeat -Status $(if ($green) { 'running' } else { 'paused' }) -Progress:$green -Sentinel ("Verifier {0} · {1} · attempt {2}" -f $(if ($green) { 'GREEN' } else { 'RED' }), $SliceId, $Attempt)
+  return $result
+}
+
 function Write-SessionState([string]$State, [string]$Outcome = '', [string]$Handover = '') {
   try {
+    # Always stamp this process PID so launch/status can reconcile dead "running" sessions
+    # (silent-start / killed-runner class from 00:44 and 02:38 logs).
+    $prior = $null
+    if (Test-Path -LiteralPath $sessionStatePath) {
+      try { $prior = Get-Content -LiteralPath $sessionStatePath -Raw | ConvertFrom-Json } catch { $prior = $null }
+    }
     $obj = [ordered]@{
       sessionId    = $SessionId
       state        = $State
@@ -486,8 +753,13 @@ function Write-SessionState([string]$State, [string]$Outcome = '', [string]$Hand
       repoDir      = $RepoDir
       workDir      = $WorkDir
       mergeTarget  = $MergeTarget
+      runnerPid    = $PID
       handoverPath = $Handover
       updatedAt    = (Get-Date).ToString('o')
+    }
+    if ($prior) {
+      if (-not $obj.ledgerHash -and $prior.ledgerHash) { $obj.ledgerHash = [string]$prior.ledgerHash }
+      if (-not $obj.ledgerTitle -and $prior.ledgerTitle) { $obj.ledgerTitle = [string]$prior.ledgerTitle }
     }
     $obj | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $sessionStatePath -Encoding utf8
   } catch {}
@@ -593,11 +865,27 @@ function Publish-Handover([string]$Path, [string]$Outcome) {
   $null = Invoke-ShowTimeApi -Method POST -Path '/api/handovers' -Body $body
 }
 
-function Invoke-Slice($prompt) {
-  Sync-LedgerToWork
+function Invoke-Slice {
+  param(
+    [Parameter(Mandatory = $true, Position = 0)]
+    [AllowEmptyString()]
+    [object]$Prompt
+  )
+  # Coerce steers + prompt to a single string (Log/API can leak Object[] into the pipeline).
   $steerPrefix = Get-SteersText
-  $fullPrompt = $steerPrefix + $prompt
-  Log ("spawn: claude -p `"$prompt`" (cwd=$WorkDir)")
+  if ($steerPrefix -is [System.Array]) {
+    $steerPrefix = [string](($steerPrefix | ForEach-Object { [string]$_ } | Select-Object -Last 1))
+  } else {
+    $steerPrefix = [string]$steerPrefix
+  }
+  if ($Prompt -is [System.Array]) {
+    $promptText = [string](($Prompt | ForEach-Object { [string]$_ }) -join "`n")
+  } else {
+    $promptText = [string]$Prompt
+  }
+  $fullPrompt = $steerPrefix + $promptText
+  $preview = if ($promptText.Length -gt 80) { $promptText.Substring(0, 80) + '…' } else { $promptText }
+  $null = Log ("spawn: claude -p `"$preview`" (cwd=$WorkDir)")
   Invoke-ShowTime -Action heartbeat -Status running -Progress -Sentinel "Spawn claude -p for slice work"
 
   $startSha = ''
@@ -607,79 +895,26 @@ function Invoke-Slice($prompt) {
   } catch {}
   finally { Pop-Location }
 
-  $sw = [System.Diagnostics.Stopwatch]::StartNew()
-  $buf = New-Object System.Text.StringBuilder
   $sliceExit = 0
-  # Mid-slice keep-alive: JSON-mode claude -p often emits nothing until exit, so
-  # line-matched heartbeats never fire and the board false-stalled at 300s.
-  $hbJob = $null
-  if (-not $NoShowTime) {
+  # Detached + no TTY: without skip-permissions claude waits forever on tool prompts.
+  # Refuse at process start (see boot guard); still assert here so a future code path
+  # cannot spawn a hang-prone claude.
+  if (-not $SkipPermissions) {
+    throw 'REFUSE: Invoke-Slice without -SkipPermissions would hang unattended on permission prompts'
+  }
+  $processResult = Invoke-ClaudeProcess -Prompt $fullPrompt -ModelName $Model -LogPrefix '  | ' -HeartbeatLabel 'slice live'
+  $sliceExit = $processResult.ExitCode
+  $text = $processResult.Text
+  $sec = [Math]::Max(0.5, $processResult.Seconds)
+  if ($text -match "unknown option\s+'?-") {
+    $argvFail = "claude argv parse failed — refuse to spin: $($Matches[0])"
     try {
-      $hbJob = Start-ThreadJob -ScriptBlock {
-        param($SessionId, $StateRoot, $LedgerPath, $LedgerHash, $LedgerTitle, $HandoverPath, $LogPath, $RunnerPid)
-        $ErrorActionPreference = 'SilentlyContinue'
-        $portFile = Join-Path $StateRoot 'server.port'
-        $tokFile = Join-Path $StateRoot 'server.token'
-        while ($true) {
-          Start-Sleep -Seconds 60
-          try {
-            if (-not (Test-Path -LiteralPath $portFile)) { continue }
-            $port = (Get-Content -LiteralPath $portFile -Raw).Trim()
-            $tok = if (Test-Path -LiteralPath $tokFile) { (Get-Content -LiteralPath $tokFile -Raw).Trim() } else { '' }
-            $headers = @{ Authorization = "Bearer $tok"; 'X-Showtime-Token' = $tok; 'Content-Type' = 'application/json' }
-            # Consume steers / ORCH NUDGE mid-slice so reconnect pings land while model runs
-            $nudgeAck = $false
-            try {
-              $cs = Invoke-RestMethod -Method POST -Uri "http://127.0.0.1:$port/api/sessions/$SessionId/consume-steers" -Headers $headers -Body '{}' -TimeoutSec 5
-              foreach ($st in @($cs.steers)) {
-                $t = [string]$st.text
-                $k = [string]$st.kind
-                if ($k -eq 'nudge' -or $t -match 'ORCH NUDGE') { $nudgeAck = $true }
-              }
-            } catch {}
-            $sentText = if ($nudgeAck) { 'nudge ack · reconnected' } else { 'slice keep-alive (model still running)' }
-            $body = @{
-              status      = 'running'
-              progress    = $true
-              pid         = $RunnerPid
-              ledgerPath  = $LedgerPath
-              ledgerHash  = $LedgerHash
-              ledgerTitle = $LedgerTitle
-              handoverPath = $HandoverPath
-              logPath     = $LogPath
-              sentinelEntry = @{ text = $sentText; level = 'info' }
-            } | ConvertTo-Json -Compress -Depth 6
-            Invoke-RestMethod -Method POST -Uri "http://127.0.0.1:$port/api/sessions/$SessionId/heartbeat" -Headers $headers -Body $body -TimeoutSec 5 | Out-Null
-          } catch {}
-        }
-      } -ArgumentList @($SessionId, (Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater'), $ledger, $LedgerHash, $LedgerTitle, $handoverPath, $log, $PID)
-    } catch {
-      Log ("  warn: mid-slice heartbeat job not started: $($_.Exception.Message)")
-    }
+      Write-SessionState -State 'blocked' -Outcome 'claude-argv-parse-failed'
+      Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'claude argv parse failed' -Sentinel $argvFail
+    } catch {}
+    Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
+    throw $argvFail
   }
-  Push-Location -LiteralPath $WorkDir
-  try {
-    $claudeArgs = @('-p', $fullPrompt, '--verbose', '--dangerously-skip-permissions', '--output-format', 'json')
-    if ($Model) { $claudeArgs = @('-p', $fullPrompt, '--model', $Model, '--verbose', '--dangerously-skip-permissions', '--output-format', 'json') }
-    & claude @claudeArgs 2>&1 | ForEach-Object {
-      $line = "$_"
-      [void]$buf.AppendLine($line)
-      Log ("  | {0}" -f $line)
-      if ($line -match 'done|commit|SC-|slice|check|token') {
-        try { Invoke-ShowTime -Action heartbeat -Status running -Progress } catch {}
-      }
-    }
-    $sliceExit = $LASTEXITCODE
-  } finally {
-    Pop-Location
-    if ($hbJob) {
-      try { Stop-Job -Job $hbJob -Force -ErrorAction SilentlyContinue } catch {}
-      try { Remove-Job -Job $hbJob -Force -ErrorAction SilentlyContinue } catch {}
-    }
-  }
-  $sw.Stop()
-  $sec = [Math]::Max(0.5, $sw.Elapsed.TotalSeconds)
-  $text = $buf.ToString()
   $usage = Parse-UsageFromText $text
   $delta = Get-GitDelta $startSha
 
@@ -698,6 +933,13 @@ function Invoke-Slice($prompt) {
   $script:Stats.costUsd += [double]$usage.costUsd
   $script:Stats.modelSec += $sec
   if ($usage.measured) { $script:Stats.measured = $true }
+  # Prefer real model id from Claude JSON so the board never shows bare "default"
+  if ($usage.model -and [string]$usage.model) {
+    $script:Stats.model = [string]$usage.model
+    if ($script:Stats.modelSource -eq 'pending-claude-result' -or -not $script:Stats.modelSource) {
+      $script:Stats.modelSource = 'claude-result'
+    }
+  }
   $script:Stats.filesCreated += $delta.filesCreated
   $script:Stats.filesTouched += $delta.filesTouched
   $script:Stats.linesAdded += $delta.linesAdded
@@ -712,7 +954,6 @@ function Invoke-Slice($prompt) {
   Log ("  stats> in={0} out={1} cacheR={2} cacheW={3} cost=`${4} sec={5:n1} files+={6} lines+={7} measured={8}" -f $usage.input, $usage.output, $usage.cacheRead, $usage.cacheCreate, $usage.costUsd, $sec, $delta.filesCreated, $delta.linesAdded, $usage.measured)
   # Scoped commit inside worktree only (never primary dirty tree)
   $sliceCommit = Invoke-ScopedCommit "showtime ${SessionId}: slice commit"
-  Sync-LedgerToPrimary
   $cAfter = Get-Counts
   $sliceNote = "Slice wall {0:n0}s · +{1} lines · tokens {2}" -f $sec, $delta.linesAdded, ($usage.input + $usage.output)
   if ($cAfter) {
@@ -723,6 +964,7 @@ function Invoke-Slice($prompt) {
   return [pscustomobject]@{
     Text     = $text
     ExitCode = $sliceExit
+    StartSha = $startSha
     Usage    = $usage
     Delta    = $delta
     Seconds  = $sec
@@ -732,12 +974,71 @@ function Invoke-Slice($prompt) {
 
 # --- main ---
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
+# Persist PID immediately so launch boot-wait / status can detect silent death
+# before the first armed: line (silent-start class).
+Write-SessionState -State 'booting'
 Log '==== autopro runner starting ===='
 Log ("sessionId={0}" -f $SessionId)
+Log ("runnerPid={0}" -f $PID)
 Log ("workDir={0}" -f $WorkDir)
 Log ("primaryRepo={0}" -f $RepoDir)
 Log ("ledgerHash={0}" -f $LedgerHash)
 Log ("ledgerTitle={0}" -f $LedgerTitle)
+Log ("skipPermissions={0}" -f $(if ($SkipPermissions) { '1' } else { '0' }))
+Log ("allowModelOnlyFinalCheck={0}" -f $(if ($AllowModelOnlyFinalCheck) { '1' } else { '0' }))
+# Resolve worker model early so Show Time can warn about credit burn
+$modelRes = Resolve-WorkerModelLabel
+if ($modelRes.Model) {
+  $script:Stats.model = $modelRes.Model
+  $script:Stats.modelSource = $modelRes.Source
+} else {
+  $script:Stats.model = ''
+  $script:Stats.modelSource = 'pending-claude-result'
+}
+if ($VerifierModel -and $VerifierModel.Trim()) {
+  $script:Stats.verifierModel = $VerifierModel.Trim()
+} else {
+  $script:Stats.verifierModel = $script:Stats.model
+}
+Log ("workerModel={0} source={1}" -f $(if ($script:Stats.model) { $script:Stats.model } else { '(pending first claude result)' }), $script:Stats.modelSource)
+Log ("sliceVerifier={0} verifierModel={1} repairAttempts={2}" -f $(if ($NoSliceVerifier) { 'off' } else { 'on' }), $(if ($script:Stats.verifierModel) { $script:Stats.verifierModel } else { 'same-as-worker' }), $VerifierRepairAttempts)
+
+# Detached runner has no TTY. Without --dangerously-skip-permissions, the first
+# tool call waits forever for a human who will never see the prompt → zombie lane.
+if (-not $SkipPermissions) {
+  Log 'FATAL: -SkipPermissions required for detached runner (no TTY). Exiting before first claude -p.'
+  try {
+    Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'No SkipPermissions (would hang)' -Sentinel 'Refused: no skip-permissions'
+  } catch {}
+  Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
+  Write-SessionState -State 'blocked' -Outcome 'no-skip-permissions'
+  Log '==== autopro runner exited (refused) ===='
+  exit 64
+}
+
+# Fail before burning slices if merge would be impossible (no independent gate).
+$gateSpec = Resolve-IndependentFinalGate -WorkDir $WorkDir
+Log ("independentGate kind={0} display={1}" -f $gateSpec.Kind, $gateSpec.Display)
+if ($gateSpec.Kind -eq 'none' -and -not $AllowModelOnlyFinalCheck) {
+  Log 'FATAL: no independent final gate configured — merge would block after all slices. Set AUTOPRO_FINAL_CHECK_CMD, scripts/final-check.ps1, package.json scripts.gate, or pass -AllowModelOnlyFinalCheck.'
+  try {
+    Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'No independent final gate' -Sentinel 'Refused: no independent gate'
+  } catch {}
+  Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
+  Write-SessionState -State 'blocked' -Outcome 'no-independent-gate'
+  Log '==== autopro runner exited (refused) ===='
+  exit 78
+}
+if (-not $NoSliceVerifier -and (-not (Test-Path -LiteralPath $SliceVerifierPs1) -or -not (Get-Command Test-SliceVerificationGreen -ErrorAction SilentlyContinue))) {
+  Log 'FATAL: post-slice verifier policy helper is missing. Refusing to run an unverified ledger.'
+  try {
+    Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'Slice verifier missing' -Sentinel 'Refused: no post-slice verifier'
+  } catch {}
+  Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
+  Write-SessionState -State 'blocked' -Outcome 'no-slice-verifier'
+  Log '==== autopro runner exited (refused) ===='
+  exit 78
+}
 Write-SessionState -State 'running'
 $c = Get-Counts
 if ($null -eq $c) { Log 'ABORT: no ledger.md'; exit 1 }
@@ -754,6 +1055,9 @@ $maxIters = $totalSlices + 2
 Log ("armed: {0} slices, cap={1} iterations" -f $totalSlices, $maxIters)
 
 $iter = 0
+# Consecutive slices with no ledger progress + no code delta → abort (log class 03:01 argv spin).
+$script:ZeroProgressStreak = 0
+$ZeroProgressLimit = 2
 while ($true) {
   $iter++
   if (-not (Test-Path -LiteralPath $flag)) {
@@ -770,11 +1074,25 @@ while ($true) {
   $c = Get-Counts
   if ($null -eq $c) { Log 'STOP: ledger vanished'; break }
 
+  # Board nudge while blocked: if operator nudged, clear board stall and keep
+  # looping only when ledger is not truly [blocked] — real blocked slices still stop.
+  $nudgeFlagPath = Join-Path $env:USERPROFILE ".claude\scratch\autopro-theater\steer\${SessionId}.nudge"
+  $hasNudge = Test-Path -LiteralPath $nudgeFlagPath
+
   if ($c.Blocked -gt 0) {
+    if ($hasNudge) {
+      Log ("nudge: ledger still has {0} [blocked] slice(s) — not auto-unblocking; inject steer into finalizer/work if any pending" -f $c.Blocked)
+      # Do not break immediately on nudge alone when blocked — still stop; operator must edit ledger.
+    }
     Log ("STOP: {0} slice(s) [blocked]" -f $c.Blocked)
     Invoke-StatusLog -Action event -Level block -Event ("{0} slice(s) [blocked] — runner stopped" -f $c.Blocked)
     Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'Ledger has blocked slices' -Sentinel 'Blocked slice detected'
     break
+  }
+
+  if ($hasNudge) {
+    Log 'nudge: flag present — next slice will include OPERATOR NUDGE / messages'
+    Invoke-ShowTime -Action heartbeat -Status running -Progress -Sentinel 'Operator nudge received — continuing'
   }
 
   if ($c.Pending -eq 0 -and $c.InProgress -eq 0) {
@@ -791,6 +1109,8 @@ FINAL_CHECK_STATUS=red
 If green, also say Epic complete, check green, and list the commits.
 If red, list each failure.
 Do NOT ship. Do NOT loop. This is the autopro completion step.
+Note: autopro will ALSO run an independent local gate (npm run gate / final-check script /
+AUTOPRO_FINAL_CHECK_CMD). Your marker alone does not authorize merge.
 '@
     $finalCheck = Invoke-Slice $finalPrompt
     $finalGreen = Test-FinalCheckGreen $finalCheck
@@ -801,6 +1121,27 @@ Do NOT ship. Do NOT loop. This is the autopro completion step.
       Write-SessionState -State 'blocked' -Outcome 'final-check-not-green' -Handover $hp
       Invoke-StatusLog -Action event -Level block -Event ("Final check not green; handover={0}" -f $hp)
       Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'Final check not green' -Sentinel ("Final check not green · handover {0}" -f $hp)
+      Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
+      break
+    }
+
+    # Independent gate: real process exit code, not model prose
+    Log 'FINALIZER: running independent final gate…'
+    Invoke-ShowTime -Action heartbeat -Status running -Progress -Sentinel 'Independent final gate'
+    $indepGate = Invoke-IndependentFinalGate -WorkDir $WorkDir -AllowModelOnly:$AllowModelOnlyFinalCheck
+    Log ("FINALIZER: independent gate kind={0} display={1} exit={2} ok={3}" -f $indepGate.Kind, $indepGate.Display, $indepGate.ExitCode, $indepGate.Ok)
+    if ($indepGate.Text) {
+      foreach ($line in ($indepGate.Text -split "`r?`n" | Select-Object -First 40)) {
+        if ($line) { Log ("  gate| {0}" -f $line) }
+      }
+    }
+    if (-not $indepGate.Ok) {
+      Log ("FINALIZER_STOP: independent gate failed (kind={0} exit={1})" -f $indepGate.Kind, $indepGate.ExitCode)
+      $hp = Write-Handover -Outcome 'independent-gate-failed' -FinalCheck $finalCheck -Notes ("Independent gate failed: kind={0} exit={1} display={2}`n{3}" -f $indepGate.Kind, $indepGate.ExitCode, $indepGate.Display, $indepGate.Text)
+      Publish-Handover -Path $hp -Outcome 'independent-gate-failed'
+      Write-SessionState -State 'blocked' -Outcome 'independent-gate-failed' -Handover $hp
+      Invoke-StatusLog -Action event -Level block -Event ("Independent gate failed; handover={0}" -f $hp)
+      Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'Independent gate failed' -Sentinel ("Independent gate failed · handover {0}" -f $hp)
       Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
       break
     }
@@ -847,7 +1188,106 @@ Do NOT ship. Do NOT loop. This is the autopro completion step.
   $status = 'pending={0} in-progress={1} done={2}' -f $c.Pending, $c.InProgress, $c.Done
   Log ('iter {0}/{1} : {2} -> work' -f $iter, $maxIters, $status)
   Invoke-ShowTime -Action heartbeat -Status running -Progress -Sentinel ("iter $iter/$maxIters $status")
-  Invoke-Slice 'work'
+  $doneBefore = $c.Done
+  $pendingBefore = $c.Pending
+  $sliceInfo = Get-NextSliceInfo
+  $sliceResult = $null
+  try {
+    # Explicit work-skill brief — bare "work" often yields empty/idle sessions
+    # (in=1 out=1). Instruct the next pending ledger slice end-to-end.
+    $workPrompt = @'
+Execute the work skill now on this repo worktree.
+
+1. Read .claude/scratch/ledger.md (must be Approved: yes).
+2. Take the FIRST slice that is [pending] or [in-progress] (not [done]/[blocked]).
+3. Implement that slice fully: edit files, run checks, mark [done] with commit hash.
+4. Commit only that slice's files with a conventional message.
+5. Do NOT start the next slice. Stop after one slice.
+
+If no pending slices remain, report all done and stop.
+'@
+    $sliceResult = Invoke-Slice $workPrompt
+  } catch {
+    Log ("STOP: Invoke-Slice threw: {0}" -f $_.Exception.Message)
+    Write-SessionState -State 'blocked' -Outcome 'slice-throw'
+    Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'Slice threw' -Sentinel $_.Exception.Message
+    Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
+    break
+  }
+
+  # Fresh verifier session follows every implementation session. UI changes
+  # cannot advance without a real Playwright screenshot and zero browser errors.
+  # A red result gets a bounded fresh repair session, then the verifier runs again.
+  $verificationBlocked = $false
+  if (-not $NoSliceVerifier) {
+    $verifyResult = $null
+    $verifyStartSha = if ($sliceResult) { [string]$sliceResult.StartSha } else { '' }
+    for ($verifyAttempt = 1; $verifyAttempt -le ($VerifierRepairAttempts + 1); $verifyAttempt++) {
+      $verifyResult = Invoke-SliceVerification -StartSha $verifyStartSha -SliceId $sliceInfo.Id -SliceTitle $sliceInfo.Title -Attempt $verifyAttempt
+      if ($verifyResult.Green) { break }
+
+      if ($verifyAttempt -le $VerifierRepairAttempts) {
+        $verifyReport = Get-SliceVerifierDecodedText $verifyResult
+        if ($verifyReport.Length -gt 6000) { $verifyReport = $verifyReport.Substring($verifyReport.Length - 6000) }
+        Log ("verify: RED — spawn fresh repair session {0}/{1}" -f $verifyAttempt, $VerifierRepairAttempts)
+        Invoke-ShowTime -Action heartbeat -Status running -Progress -Sentinel ("Verifier RED · repair {0}/{1} · {2}" -f $verifyAttempt, $VerifierRepairAttempts, $sliceInfo.Id)
+        $repairPrompt = @"
+Repair ONLY the just-completed ledger slice $($sliceInfo.Id) — $($sliceInfo.Title).
+Do not start or mark any other ledger slice. Read the committed diff from $verifyStartSha..HEAD
+and the independent verifier report below. Fix the concrete failures, run focused checks,
+keep the current slice [done], and commit only the repair. This is a fresh AutoPro repair session.
+
+VERIFIER REPORT:
+$verifyReport
+"@
+        try {
+          $null = Invoke-Slice $repairPrompt
+        } catch {
+          Log ("verify: repair session threw: {0}" -f $_.Exception.Message)
+        }
+        continue
+      }
+
+      $verificationBlocked = $true
+      $verifyReport = Get-SliceVerifierDecodedText $verifyResult
+      if ($verifyReport.Length -gt 6000) { $verifyReport = $verifyReport.Substring($verifyReport.Length - 6000) }
+      Log ("VERIFY_STOP: {0} remained red after {1} repair attempt(s)" -f $sliceInfo.Id, $VerifierRepairAttempts)
+      $hp = Write-Handover -Outcome 'slice-verification-failed' -Notes ("Slice {0} verifier stayed red after {1} repair attempt(s).`n{2}" -f $sliceInfo.Id, $VerifierRepairAttempts, $verifyReport)
+      Publish-Handover -Path $hp -Outcome 'slice-verification-failed'
+      Write-SessionState -State 'blocked' -Outcome 'slice-verification-failed' -Handover $hp
+      Invoke-StatusLog -Action event -Level block -Event ("Slice verifier red: {0}; handover={1}" -f $sliceInfo.Id, $hp)
+      Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'Slice verification failed' -Sentinel ("Verifier RED · {0} · handover {1}" -f $sliceInfo.Id, $hp)
+      Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
+      break
+    }
+  }
+  if ($verificationBlocked) { break }
+
+  $cAfter = Get-Counts
+  $doneAfter = if ($cAfter) { $cAfter.Done } else { $doneBefore }
+  $pendingAfter = if ($cAfter) { $cAfter.Pending } else { $pendingBefore }
+  $lines = 0
+  $files = 0
+  if ($sliceResult -and $sliceResult.Delta) {
+    $lines = [int]$sliceResult.Delta.linesAdded + [int]$sliceResult.Delta.linesDeleted
+    $files = [int]$sliceResult.Delta.filesCreated + [int]$sliceResult.Delta.filesTouched
+  }
+  $ledgerMoved = ($doneAfter -gt $doneBefore) -or ($pendingAfter -lt $pendingBefore)
+  $codeMoved = ($lines -gt 0) -or ($files -gt 0)
+  if (-not $ledgerMoved -and -not $codeMoved) {
+    $script:ZeroProgressStreak++
+    Log ("zero-progress streak={0}/{1} (no ledger move, no code delta)" -f $script:ZeroProgressStreak, $ZeroProgressLimit)
+    if ($script:ZeroProgressStreak -ge $ZeroProgressLimit) {
+      Log 'STOP: consecutive zero-progress slices — refusing to spin the iteration cap'
+      Write-SessionState -State 'blocked' -Outcome 'zero-progress-abort'
+      Invoke-StatusLog -Action event -Level block -Event ("Zero-progress abort after {0} slices" -f $script:ZeroProgressStreak)
+      Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'Zero-progress abort' -Sentinel 'Consecutive empty slices'
+      Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
+      break
+    }
+  } else {
+    $script:ZeroProgressStreak = 0
+  }
 }
 
 Log '==== autopro runner exited ===='

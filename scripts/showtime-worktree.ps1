@@ -77,7 +77,13 @@ function Get-CurrentBranch([string]$dir) {
   Push-Location -LiteralPath $dir
   try {
     $b = (& git rev-parse --abbrev-ref HEAD 2>$null).Trim()
-    if ($b -eq 'HEAD' -or -not $b) { return 'main' }
+    # Detached HEAD: never fall back to 'main' — that drops uncommitted tip commits
+    # (log class 2026-07-11: primary at SD-N1 detached while worktree base became main).
+    if ($b -eq 'HEAD' -or -not $b) {
+      $sha = (& git rev-parse HEAD 2>$null).Trim()
+      if ($sha) { return $sha }
+      return 'HEAD'
+    }
     return $b
   } finally { Pop-Location }
 }
@@ -123,6 +129,63 @@ function Restore-PrimaryBranch([string]$primary, [string]$branch) {
     if ($LASTEXITCODE -eq 0) { Write-Output "RESTORED_BRANCH=$branch" }
     else { Write-Output "RESTORE_BRANCH_FAILED=$branch" }
   } finally { Pop-Location }
+}
+
+function Assert-SafeSessionWorktreePath([string]$primary, [string]$worktree) {
+  $root = [IO.Path]::GetFullPath((Get-WorktreeRoot $primary)).TrimEnd('\', '/')
+  $candidate = [IO.Path]::GetFullPath($worktree).TrimEnd('\', '/')
+  $prefix = $root + [IO.Path]::DirectorySeparatorChar
+  if (-not $candidate.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing cleanup outside Show Time worktree root: $candidate"
+  }
+  return $candidate
+}
+
+function Remove-WorktreeReparsePoints([string]$primary, [string]$worktree) {
+  $safe = Assert-SafeSessionWorktreePath $primary $worktree
+  if (-not (Test-Path -LiteralPath $safe)) { return }
+
+  # `git worktree remove --force` can unregister the worktree and then fail to
+  # delete a Windows junction (commonly node_modules), leaving an orphan folder.
+  # Unlink reparse points without following them; their targets are never touched.
+  $pending = [System.Collections.Generic.Stack[System.IO.DirectoryInfo]]::new()
+  $pending.Push([System.IO.DirectoryInfo]::new($safe))
+  while ($pending.Count -gt 0) {
+    $dir = $pending.Pop()
+    foreach ($item in @($dir.EnumerateFileSystemInfos())) {
+      if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Remove-Item -LiteralPath $item.FullName -Force -ErrorAction Stop
+      } elseif ($item -is [System.IO.DirectoryInfo]) {
+        $pending.Push($item)
+      }
+    }
+  }
+}
+
+function Test-WorktreeRegistered([string]$primary, [string]$worktree) {
+  $want = [IO.Path]::GetFullPath($worktree).TrimEnd('\', '/')
+  foreach ($line in @(& git -C $primary worktree list --porcelain 2>$null)) {
+    if ($line -notmatch '^worktree\s+(.+)$') { continue }
+    try {
+      $found = [IO.Path]::GetFullPath($Matches[1].Trim()).TrimEnd('\', '/')
+      if ($found.Equals($want, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    } catch {}
+  }
+  return $false
+}
+
+function Remove-OrphanedWorktreeDirectory([string]$primary, [string]$worktree) {
+  $safe = Assert-SafeSessionWorktreePath $primary $worktree
+  if (Test-WorktreeRegistered $primary $safe) { return $false }
+  if (-not (Test-Path -LiteralPath $safe)) { return $true }
+  Remove-WorktreeReparsePoints $primary $safe
+  for ($attempt = 1; $attempt -le 3 -and (Test-Path -LiteralPath $safe); $attempt++) {
+    try { Remove-Item -LiteralPath $safe -Recurse -Force -ErrorAction Stop } catch {
+      if ($attempt -eq 3) { throw }
+      Start-Sleep -Milliseconds 200
+    }
+  }
+  return (-not (Test-Path -LiteralPath $safe))
 }
 
 switch ($Action) {
@@ -290,18 +353,25 @@ switch ($Action) {
     # Prune worktree + branch
     Push-Location $primary
     try {
+      Remove-WorktreeReparsePoints $primary $wt
       & git worktree remove --force $wt 2>&1 | ForEach-Object { Write-Output "wt> $_" }
       $wtRemoveExit = $LASTEXITCODE
-      & git branch -d $branch 2>&1 | ForEach-Object { Write-Output "branch> $_" }
-      $branchDeleteExit = $LASTEXITCODE
       & git worktree prune 2>&1 | Out-Null
-      if ($wtRemoveExit -ne 0 -or (Test-Path -LiteralPath $wt)) {
+      if ($wtRemoveExit -ne 0 -or (Test-Path -LiteralPath $wt) -or (Test-WorktreeRegistered $primary $wt)) {
+        if (Remove-OrphanedWorktreeDirectory $primary $wt) {
+          Write-Output 'wt> recovered orphaned worktree directory after git cleanup'
+          $wtRemoveExit = 0
+        }
+      }
+      if ($wtRemoveExit -ne 0 -or (Test-Path -LiteralPath $wt) -or (Test-WorktreeRegistered $primary $wt)) {
         Write-Output 'STATUS=worktree-remove-failed'
         Write-Output "WORKTREE_PATH=$wt"
-        # Merge already landed; hand the operator's branch back before bailing.
         if ($switched) { Restore-PrimaryBranch $primary $restoreTo }
         exit 4
       }
+      & git branch -d $branch 2>&1 | ForEach-Object { Write-Output "branch> $_" }
+      $branchDeleteExit = $LASTEXITCODE
+      & git worktree prune 2>&1 | Out-Null
       if ($branchDeleteExit -ne 0) {
         Write-Output 'STATUS=branch-delete-failed'
         Write-Output "BRANCH=$branch"
