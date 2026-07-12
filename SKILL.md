@@ -13,7 +13,7 @@ background runner drives the ledger to completion on its own.
 **Multi-engine (not Claude-only):** the worker is pluggable —
 `claude | codex | gemini | grok | ollama`. Default **`-Engine auto`** picks the
 first installed agentic CLI. Pin with `-Engine codex` (etc). See
-`references/ENGINES.md`. Doctor: `scripts/autopro-doctor.ps1`.
+`references/ENGINES.md`, checklist `references/BULLETPROOF.md`. Doctor: `scripts/autopro-doctor.ps1`.
 
 **Show Time** is the optional visual board (v2): arcade **horizontal** Pac-Man
 lanes per chat, a left **monitor Pac** that watches/locks onto problems, Mission

@@ -454,9 +454,17 @@ function findSessionDuplicate(body = {}, ident = {}) {
   const root = resolveGitRoot(body.primaryRepoPath || ident.primaryRepoPath || ident.repoPath || body.repoPath || '')
   const title = normalizeTitle(body.ledgerTitle || '')
   const sessions = listSessions().filter((s) => s && s.sessionId !== sid)
+  // Dedupe only against truly live lanes. Dead-pid stalled/running zombies must
+  // NOT block re-arm of the same ledger (operator re-attach / OpenRegister).
   const live = (s) => {
     const st = String(s.status || '').toLowerCase()
-    return st !== 'complete' && st !== 'completed' && st !== 'done'
+    if (st === 'complete' || st === 'completed' || st === 'done') return false
+    const pid = s.pid != null ? Number(s.pid) : 0
+    const alive = pid > 0 && isPidAlive(pid)
+    if (!alive && ['stalled', 'blocked', 'paused', 'error', 'running', 'in-progress', 'queued', 'needs_input'].includes(st)) {
+      return false
+    }
+    return true
   }
 
   // 1) Immutable arm key (preferred)

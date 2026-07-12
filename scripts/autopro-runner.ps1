@@ -179,7 +179,34 @@ function Invoke-ShowTimeApi {
     $resp = Invoke-WebRequest @params
     return ($resp.Content | ConvertFrom-Json)
   } catch {
-    Log ("  showtime> warn: {0}" -f $_.Exception.Message)
+    $msg = $_.Exception.Message
+    # Board restart rotates token/port files — re-read once and retry (bulletproof
+    # against the common mid-run :8770 bounce without killing the worker).
+    if ($msg -match '401|403|404|refused|cannot be made|actively refused') {
+      try {
+        Start-Sleep -Milliseconds 400
+        $base2 = Get-ShowTimeUrl
+        $tok2 = Get-ShowTimeToken
+        if ($base2 -and $tok2) {
+          $params2 = @{
+            Uri             = "$base2$Path"
+            Method          = $Method
+            UseBasicParsing = $true
+            TimeoutSec      = 8
+            Headers         = @{ 'X-Showtime-Token' = $tok2 }
+          }
+          if ($null -ne $Body) {
+            $params2.ContentType = 'application/json'
+            $params2.Body = ($Body | ConvertTo-Json -Depth 10 -Compress)
+          }
+          $resp2 = Invoke-WebRequest @params2
+          return ($resp2.Content | ConvertFrom-Json)
+        }
+      } catch {
+        $msg = $_.Exception.Message
+      }
+    }
+    Log ("  showtime> warn: {0}" -f $msg)
     return $null
   }
 }
