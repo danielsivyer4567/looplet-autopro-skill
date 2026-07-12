@@ -4,8 +4,44 @@ One-key **autonomous ledger runner** + optional **Show Time** board for AI codin
 
 ## Install (`npx skills`)
 
+**Do not use `--all` / `--agent *` with `-g`.** PromptScript and Eve reject global installs and the CLI reports “Failed to install 1” even when the skill landed for other agents.
+
+### Recommended (global, supported agents)
+
 ```bash
-npx skills add danielsivyer4567/looplet-autopro-skill@autopro -g -y
+npx skills add danielsivyer4567/looplet-autopro-skill@autopro -g -y \
+  --agent claude-code --agent cursor --agent codex --agent antigravity
+```
+
+Windows (PowerShell):
+
+```powershell
+npx skills add danielsivyer4567/looplet-autopro-skill@autopro -g -y `
+  --agent claude-code --agent cursor --agent codex --agent antigravity
+```
+
+That installs to `~/.agents/skills/autopro` and symlinks/copies for those hosts.
+
+### Grok / multi-host junctions (Windows)
+
+After the skill exists under `~/.agents/skills/autopro` or `~/.claude/skills/autopro`:
+
+```powershell
+pwsh -File "$env:USERPROFILE\.claude\skills\autopro\scripts\install-hosts.ps1" -RepoDir <your-repo>
+```
+
+That junctions into Cursor, Codex, Grok, Antigravity, workspace, etc.
+
+### Project-only (no `-g`)
+
+```bash
+npx skills add danielsivyer4567/looplet-autopro-skill@autopro -y --agent claude-code
+```
+
+### List without installing
+
+```bash
+npx skills add danielsivyer4567/looplet-autopro-skill@autopro -l
 ```
 
 ## Multi-engine workers (not Claude-only)
@@ -32,3 +68,9 @@ Stop with `-autopro off` or `scripts/stop-autopro.ps1`.
 - PowerShell 7+ (`pwsh`) on Windows
 - Ledger at `.claude/scratch/ledger.md` with `Approved: yes`
 - At least one worker CLI: Claude Code, Codex, Gemini CLI, or Grok CLI
+
+## Doctor
+
+```powershell
+pwsh -File "$env:USERPROFILE\.claude\skills\autopro\scripts\autopro-doctor.ps1" -RepoDir <repo>
+```
