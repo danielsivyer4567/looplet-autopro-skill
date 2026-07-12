@@ -18,13 +18,17 @@ param(
   [Parameter(Mandatory = $true)][string]$Root,
   [Parameter(Mandatory = $true)][string]$RepoDir,
   [string]$Model = '',
+  # Worker engine: auto (default) | claude | codex | gemini | grok | ollama
+  [string]$Engine = 'auto',
+  [string]$VerifierEngine = '',
+  [switch]$AllowOllama,
   [switch]$NoBrowser,
   # Headless: skip theater ensure/register/open-board; still arm runner + worktree.
   # Watch via: Get-Content .claude\scratch\autopro.log -Wait
   [switch]$NoShowTime,
   [switch]$NoWorktree,
   [switch]$PushOnFinish,
-  # Required together: unattended claude --dangerously-skip-permissions
+  # Required together: unattended worker risk (engine-specific skip/yolo/bypass flags)
   [switch]$AllowDangerousSkipPermissions,
   [switch]$IAcceptUnattendedRisk,
   # Escape hatch: merge on model FINAL_CHECK_STATUS=green without npm/script gate
@@ -54,20 +58,28 @@ $scratch = Join-Path $Root '.claude\scratch'
 $ledger = Join-Path $RepoDir '.claude\scratch\ledger.md'
 $sessionStatePath = Join-Path $scratch 'autopro-session.json'
 
+. (Join-Path $SkillScripts 'worker-engines.ps1')
+
 if (-not $AllowDangerousSkipPermissions -or -not $IAcceptUnattendedRisk) {
   throw @'
 Refusing to arm unattended autopro without explicit risk acceptance.
 
-A detached runner has no TTY. Without --dangerously-skip-permissions the first
-tool call waits forever for a human who never sees the prompt (zombie lane).
+A detached runner has no TTY. Without engine unattended flags (Claude skip-permissions,
+Codex bypass-approvals, Gemini yolo, Grok always-approve) the first tool call waits
+forever for a human who never sees the prompt (zombie lane).
 
 Pass BOTH switches to arm:
   -AllowDangerousSkipPermissions
   -IAcceptUnattendedRisk
 
-Example:
+Example (auto-pick first available engine: claude → codex → gemini → grok):
   pwsh -NoProfile -File launch-showtime.ps1 -Root <root> -RepoDir <repo> `
     -AllowDangerousSkipPermissions -IAcceptUnattendedRisk
+
+Pin an engine:
+  … -Engine codex -Model o3
+  … -Engine gemini
+  … -Engine grok
 '@
 }
 
@@ -98,6 +110,30 @@ Resolved work dir probe: $RepoDir
 "@
 }
 Write-Output ("INDEPENDENT_GATE kind={0} display={1}" -f $preGate.Kind, $preGate.Display)
+
+# Engine preflight BEFORE arming — fail fast with install hints (prompt-and-play)
+$allEngines = Get-AllEngineResolutions
+Write-Output (Format-EnginePreflightReport -Resolutions $allEngines)
+try {
+  $resolvedEngine = Resolve-AutoproEngine -Requested $Engine -AllowOllama:$AllowOllama
+} catch {
+  throw @"
+ENGINE_PREFLIGHT_FAILED: $($_.Exception.Message)
+
+Run doctor for a full report:
+  pwsh -NoProfile -File `"$SkillScripts\autopro-doctor.ps1`" -RepoDir `"$RepoDir`"
+"@
+}
+if ($VerifierEngine -and $VerifierEngine.Trim()) {
+  try {
+    $null = Resolve-AutoproEngine -Requested $VerifierEngine.Trim() -AllowOllama:$AllowOllama
+  } catch {
+    throw "VERIFIER_ENGINE_PREFLIGHT_FAILED: $($_.Exception.Message)"
+  }
+}
+Write-Output ("ENGINE_SELECTED={0}" -f $resolvedEngine.Engine)
+Write-Output ("ENGINE_DISPLAY={0}" -f $resolvedEngine.Display)
+Write-Output ("ENGINE_RISK={0}" -f (Get-EngineRiskLabel -Engine $resolvedEngine.Engine))
 
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 # Per-session flag: each runner owns its own kill switch, so lanes can't disarm
@@ -439,6 +475,10 @@ $runnerArgParts = @(
 )
 if ($NoShowTime) { $runnerArgParts += '-NoShowTime' }
 if ($Model) { $runnerArgParts += @('-Model', (Quote-Arg $Model)) }
+# Pass resolved engine id (not "auto") so runner doesn't re-roll if PATH changes mid-flight
+$runnerArgParts += @('-Engine', (Quote-Arg $resolvedEngine.Engine))
+if ($VerifierEngine) { $runnerArgParts += @('-VerifierEngine', (Quote-Arg $VerifierEngine)) }
+if ($AllowOllama) { $runnerArgParts += '-AllowOllama' }
 if ($NoWorktree) { $runnerArgParts += '-NoWorktree' }
 if ($PushOnFinish) { $runnerArgParts += '-PushOnFinish' }
 if ($AllowModelOnlyFinalCheck) { $runnerArgParts += '-AllowModelOnlyFinalCheck' }
@@ -494,6 +534,9 @@ try {
     workDir     = $workDir
     runnerPid   = $runnerPid
     mergeTarget = $MergeTarget
+    engine      = $resolvedEngine.Engine
+    engineDisplay = $resolvedEngine.Display
+    model       = $Model
     state       = 'armed'
     outcome     = 'launching'
     updatedAt   = (Get-Date).ToString('o')
@@ -502,6 +545,10 @@ try {
 } catch {
   Write-Output "SESSION_STATE_WARN=$($_.Exception.Message)"
 }
+try {
+  $null = Save-EngineChoice -ScratchDir $scratch -Engine $resolvedEngine.Engine -Model $Model `
+    -SessionId $sessionId -Display $resolvedEngine.Display
+} catch {}
 
 # Boot liveness: refuse to leave a "healthy" session if the runner never arms.
 # Detects silent-start class (flag on, no armed: line, dead/missing PID).
@@ -676,6 +723,8 @@ Write-Output '  Manual log:'
 Write-Output "    Get-Content `"$scratch\autopro.log`" -Wait"
 Write-Output ''
 Write-Output "SHOWTIME_SESSION=$sessionId"
+Write-Output ("ENGINE={0}" -f $resolvedEngine.Engine)
+Write-Output ("ENGINE_DISPLAY={0}" -f $resolvedEngine.Display)
 Write-Output "RUNNER_PID=$runnerPid"
 Write-Output "LAUNCHER_PID=$($proc.Id)"
 Write-Output "WORK_DIR=$workDir"

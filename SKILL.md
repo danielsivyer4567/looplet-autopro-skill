@@ -1,6 +1,6 @@
 ---
 name: autopro
-description: "One-key autonomous ledger execution with optional Show Time visual board (Looplet). After a ledger exists and is approved, `-autopro` (or `/autopro`) launches a background runner that executes every remaining slice as its own FRESH `claude -p` session (true clean context per slice), opens Show Time in the browser for multi-chat progress, loops until 100% done — then runs `check`, reports, and disarms. `-autopro off` stops it. Pairs with `ledger` and `work`."
+description: "One-key autonomous ledger execution with optional Show Time visual board (Looplet). After a ledger exists and is approved, `-autopro` (or `/autopro`) launches a background runner that executes every remaining slice as its own FRESH worker session (true clean context per slice). Default engine is auto: first available of Claude Code → Codex → Gemini CLI → Grok CLI (Ollama opt-in only). Opens Show Time for multi-chat progress, loops until 100% done — then runs check, reports, and disarms. `-autopro off` stops it. Pairs with `ledger` and `work`."
 trigger: /autopro
 ---
 
@@ -9,6 +9,11 @@ trigger: /autopro
 `work` does one slice, commits, and stops so you can `/clear` and run `work`
 again. `autopro` removes both manual steps: you type `-autopro` **once**, and a
 background runner drives the ledger to completion on its own.
+
+**Multi-engine (not Claude-only):** the worker is pluggable —
+`claude | codex | gemini | grok | ollama`. Default **`-Engine auto`** picks the
+first installed agentic CLI. Pin with `-Engine codex` (etc). See
+`references/ENGINES.md`. Doctor: `scripts/autopro-doctor.ps1`.
 
 **Show Time** is the optional visual board (v2): arcade **horizontal** Pac-Man
 lanes per chat, a left **monitor Pac** that watches/locks onto problems, Mission
@@ -20,8 +25,9 @@ Credit: **Show Time - Looplet**.
 
 ## Why a background runner
 
-Claude cannot clear its own context. Each `claude -p "work"` is a brand-new
-session = genuinely clean context. The runner loops one slice per process.
+Agent CLIs cannot clear their own context mid-ledger. Each slice is a brand-new
+process (`claude -p`, `codex exec`, `gemini -p`, …) = genuinely clean context.
+The runner loops one slice per process.
 
 Canonical scripts live in this skill:
 
@@ -29,15 +35,19 @@ Canonical scripts live in this skill:
 |--------|------|
 | `scripts/launch-showtime.ps1` | Arm flag + worktree + Show Time + detach runner |
 | `scripts/autopro-runner.ps1` | Slice loop + scoped commits + finish merge/prune |
-| `scripts/showtime-final-check.ps1` | Merge gate: decode `claude -p` JSON → green/red verdict |
+| `scripts/worker-engines.ps1` | Multi-engine resolve + argv adapters (claude/codex/gemini/grok/ollama) |
+| `scripts/autopro-doctor.ps1` | Preflight engines/ledger/gate (no arm) |
+| `scripts/showtime-final-check.ps1` | Merge gate: decode worker result → green/red verdict |
 | `scripts/showtime-worktree.ps1` | create / finish (merge) / prune worktrees |
 | `scripts/showtime-scoped-commit.ps1` | Commit only paths inside one worktree |
 | `scripts/theater-server.mjs` | Localhost Show Time server (port 8770+) |
 | `scripts/theater-register.ps1` | ensure / register / heartbeat / complete |
 | `scripts/showtime-open-board.ps1` | **Always** open board URL in browser; companion/extension hooks additive |
-| `scripts/test-showtime.ps1` | Automated board tests (no claude) |
+| `scripts/test-showtime.ps1` | Automated board tests (no LLM) |
+| `scripts/test-worker-engines.ps1` | Offline multi-engine unit tests |
 | `theater/index.html` | Show Time UI |
 | `theater/tips.json` | Pause-screen rotating tips |
+| `references/ENGINES.md` | Engine matrix + env vars |
 
 Always launch with **`pwsh`**, not Windows PowerShell 5.1.
 
@@ -173,13 +183,15 @@ Remove-Item -LiteralPath '<Root>\.claude\scratch\autopro-on' -Force -ErrorAction
 
 ## What the runner guarantees
 
-- Fresh context per slice (`claude -p`)
+- Fresh context per slice (new worker process each time)
+- Multi-engine auto-detect + pin (`-Engine`, `AUTOPRO_ENGINE`)
 - Instant chaining on process exit
-- `--dangerously-skip-permissions` for unattended runs
+- Engine-specific unattended flags (Claude skip-permissions / Codex bypass / Gemini yolo / Grok always-approve)
 - Merges ONLY when the final check emits `FINAL_CHECK_STATUS=green` (red or unparseable → blocked + handover, worktree preserved, no merge)
 - Stops on `[blocked]`, kill switch (`autopro-on.<sessionId>` deleted), or iteration cap
 - Audit trail: `.claude/scratch/autopro.log`
-- Show Time heartbeats (unless `-NoShowTime`)
+- Show Time heartbeats with **engine + model** credit chips (unless `-NoShowTime`)
+- Preflight fails before arm if no worker CLI is installed (`autopro-doctor.ps1`)
 
 ## Honest limits
 

@@ -113,7 +113,12 @@ cd C:\Users\danie\.claude\skills\autopro\scripts
 pwsh -File launch-showtime.ps1 -Root "C:\repos\looplet webb app\looplet crm" -RepoDir "C:\repos\looplet webb app\looplet crm"
 
 # Options:
+#   -Engine auto|claude|codex|gemini|grok|ollama   (default auto)
 #   -Model "<model>"   pin the model for slices
+#   -VerifierEngine / -VerifierModel   optional separate reviewer
+# Doctor (no arm):
+#   pwsh -File …\autopro-doctor.ps1 -RepoDir <repo>
+# Engines doc: references/ENGINES.md
 #   -NoBrowser         arm without opening the board window
 #   -NoWorktree        run in-place instead of a sibling worktree
 #   -PushOnFinish      git push when the ledger completes

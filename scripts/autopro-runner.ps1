@@ -10,6 +10,11 @@ param(
   [string]$MergeTarget = 'base',
   [string]$MainBranch = '',
   [string]$Model = '',
+  # Worker engine: auto | claude | codex | gemini | grok | ollama
+  [string]$Engine = 'auto',
+  [string]$VerifierEngine = '',
+  # ollama is text-only by default; require explicit opt-in
+  [switch]$AllowOllama,
   [string]$LedgerHash = '',
   [string]$LedgerTitle = '',
   [string]$SessionId = '',
@@ -43,9 +48,11 @@ $StatusPs1 = Join-Path $PSScriptRoot 'showtime-status.ps1'
 $SliceVerifierPs1 = Join-Path $PSScriptRoot 'showtime-slice-verifier.ps1'
 $StateRoot = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater'
 $PortFile = Join-Path $StateRoot 'server.port'
+$workerPidFile = Join-Path $scratch 'autopro-worker.pid'
 
 # Merge gate lives in one place, shared with test-showtime.ps1
 . (Join-Path $PSScriptRoot 'showtime-final-check.ps1')
+. (Join-Path $PSScriptRoot 'worker-engines.ps1')
 if (Test-Path -LiteralPath $SliceVerifierPs1) { . $SliceVerifierPs1 }
 
 # Code workdir = isolated worktree when available
@@ -54,10 +61,33 @@ $ledger = if (Test-Path (Join-Path $WorkDir '.claude\scratch\ledger.md')) {
   Join-Path $WorkDir '.claude\scratch\ledger.md'
 } else { $ledgerPrimary }
 
+# Resolve worker engine early (fail before burning slices if nothing installed)
+try {
+  $script:WorkerResolution = Resolve-AutoproEngine -Requested $Engine -AllowOllama:$AllowOllama -Quiet
+} catch {
+  Write-Output ("FATAL engine resolve: {0}" -f $_.Exception.Message)
+  throw
+}
+$script:EngineId = [string]$script:WorkerResolution.Engine
+if ($VerifierEngine -and $VerifierEngine.Trim()) {
+  try {
+    $script:VerifierResolution = Resolve-AutoproEngine -Requested $VerifierEngine.Trim() -AllowOllama:$AllowOllama -Quiet
+  } catch {
+    Write-Output ("FATAL verifier engine resolve: {0}" -f $_.Exception.Message)
+    throw
+  }
+} else {
+  $script:VerifierResolution = $script:WorkerResolution
+}
+$script:VerifierEngineId = [string]$script:VerifierResolution.Engine
+
 # Accumulated session stats (model is credit-critical on multi-repo fleets)
 $script:Stats = @{
+  engine = $script:EngineId
+  engineDisplay = [string]$script:WorkerResolution.Display
   model = if ($Model) { $Model } else { '' }
   verifierModel = if ($VerifierModel) { $VerifierModel } else { '' }
+  verifierEngine = $script:VerifierEngineId
   modelSource = if ($Model) { 'flag' } else { 'unresolved' }
   measured = $false
   input = 0
@@ -113,29 +143,6 @@ function Log($msg) {
   Write-Output $line
 }
 
-function Resolve-ClaudeExe {
-  <#
-    Prefer a real claude.exe. Never return npm's claude.ps1 / claude.cmd shims —
-    those collapse PowerShell argv into one bogus option
-    (log: unknown option '- work --verbose --dangerously-skip-permissions …').
-  #>
-  $candidates = @(
-    (Join-Path $env:USERPROFILE '.local\bin\claude.exe'),
-    (Join-Path $env:APPDATA 'npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe'),
-    (Join-Path $env:LOCALAPPDATA 'npm\claude.exe')
-  )
-  foreach ($cand in $candidates) {
-    if ($cand -and (Test-Path -LiteralPath $cand) -and ($cand -match '\.exe$')) {
-      return $cand
-    }
-  }
-  $cmd = Get-Command claude.exe -ErrorAction SilentlyContinue
-  if ($cmd -and $cmd.Source -and ($cmd.Source -match '\.exe$') -and (Test-Path -LiteralPath $cmd.Source)) {
-    return $cmd.Source
-  }
-  return $null
-}
-
 function Get-ShowTimeUrl {
   if (-not (Test-Path -LiteralPath $PortFile)) { return $null }
   $p = (Get-Content -LiteralPath $PortFile -Raw).Trim()
@@ -186,10 +193,14 @@ function Build-StatsPayload {
   $fpt = if ($tpm -gt 0) { [Math]::Round($script:Stats.filesCreated / $tpm, 4) } else { 0 }
   $modelLabel = if ($script:Stats.model) { [string]$script:Stats.model } else { 'unknown (cli-default)' }
   $verLabel = if ($script:Stats.verifierModel) { [string]$script:Stats.verifierModel } else { $modelLabel }
+  $engineLabel = if ($script:Stats.engine) { [string]$script:Stats.engine } else { 'unknown' }
   return @{
+    engine         = $engineLabel
+    engineDisplay  = [string]$script:Stats.engineDisplay
     model          = $modelLabel
     modelSource    = [string]$script:Stats.modelSource
     verifierModel  = $verLabel
+    verifierEngine = [string]$script:Stats.verifierEngine
     measured = [bool]$script:Stats.measured
     tokens   = @{
       input         = [int]$script:Stats.input
@@ -472,19 +483,24 @@ function Get-GitDelta([string]$startSha) {
 }
 
 function Resolve-WorkerModelLabel {
-  # Prefer explicit -Model, then env overrides Claude Code commonly uses, then
-  # a short claude probe. Never silently label as "default" on the board.
+  # Prefer explicit -Model, then AUTOPRO_MODEL / engine-specific env, then pending.
   if ($Model -and $Model.Trim()) {
     return [pscustomobject]@{ Model = $Model.Trim(); Source = 'flag' }
   }
-  foreach ($envName in @('ANTHROPIC_MODEL', 'CLAUDE_MODEL', 'CLAUDE_CODE_MODEL')) {
+  if ($env:AUTOPRO_MODEL -and $env:AUTOPRO_MODEL.Trim()) {
+    return [pscustomobject]@{ Model = $env:AUTOPRO_MODEL.Trim(); Source = 'env:AUTOPRO_MODEL' }
+  }
+  $envNames = @('ANTHROPIC_MODEL', 'CLAUDE_MODEL', 'CLAUDE_CODE_MODEL', 'OPENAI_MODEL', 'CODEX_MODEL', 'GEMINI_MODEL', 'GOOGLE_MODEL', 'GROK_MODEL', 'XAI_MODEL', 'OLLAMA_MODEL')
+  foreach ($envName in $envNames) {
     $v = [string][Environment]::GetEnvironmentVariable($envName)
     if ($v -and $v.Trim()) {
       return [pscustomobject]@{ Model = $v.Trim(); Source = "env:$envName" }
     }
   }
-  # Last resort: leave empty until first JSON result fills model from Claude
-  return [pscustomobject]@{ Model = ''; Source = 'pending-claude-result' }
+  if ($script:WorkerResolution -and $script:WorkerResolution.DefaultModel) {
+    return [pscustomobject]@{ Model = [string]$script:WorkerResolution.DefaultModel; Source = 'engine-default' }
+  }
+  return [pscustomobject]@{ Model = ''; Source = 'pending-worker-result' }
 }
 
 function Parse-UsageFromText([string]$text) {
@@ -558,46 +574,56 @@ function Get-ChangedFilesSince([string]$StartSha) {
   finally { Pop-Location }
 }
 
-function Invoke-ClaudeProcess {
+function Invoke-WorkerProcess {
+  <#
+    Spawn the resolved agent CLI for one prompt (slice / verify / final check).
+    Engine-agnostic: uses worker-engines.ps1 resolution + argv builders.
+  #>
   param(
     [Parameter(Mandatory = $true)][string]$Prompt,
     [string]$ModelName = '',
     [string]$LogPrefix = '  | ',
-    [string]$HeartbeatLabel = 'slice live'
+    [string]$HeartbeatLabel = 'slice live',
+    $Resolution = $null
   )
 
   if (-not $SkipPermissions) {
-    throw 'REFUSE: detached claude process requires -SkipPermissions'
+    throw 'REFUSE: detached worker process requires -SkipPermissions (no TTY for approval prompts)'
   }
-  $claudeExe = Resolve-ClaudeExe
-  if (-not $claudeExe) {
-    throw 'claude.exe not found (need Claude Code CLI binary — not only claude.cmd/claude.ps1)'
+  $res = if ($null -ne $Resolution) { $Resolution } else { $script:WorkerResolution }
+  if (-not $res -or -not $res.Available) {
+    throw "Worker engine not available: $($res.Engine) — $($res.Hint)"
   }
-  if ($claudeExe -match '\.(ps1|cmd)$') {
-    throw "REFUSE: resolved claude path is a shim ($claudeExe) — use real .exe"
+  if ($res.FileName -match '\.(ps1|cmd)$') {
+    throw "REFUSE: resolved worker path is a shim ($($res.FileName)) — use real .exe or node cli.js"
   }
 
+  $extraArgs = Build-WorkerArgumentList -Resolution $res -Prompt $Prompt -ModelName $ModelName `
+    -WorkDir $WorkDir -SkipPermissions:$SkipPermissions
+
   $psi = [System.Diagnostics.ProcessStartInfo]::new()
-  $psi.FileName = $claudeExe
+  $psi.FileName = $res.FileName
   $psi.WorkingDirectory = $WorkDir
   $psi.UseShellExecute = $false
   $psi.CreateNoWindow = $true
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
-  if ($ModelName) {
-    [void]$psi.ArgumentList.Add('--model')
-    [void]$psi.ArgumentList.Add($ModelName)
+  foreach ($a in @($res.PrefixArgs)) {
+    if ($null -ne $a -and [string]$a -ne '') { [void]$psi.ArgumentList.Add([string]$a) }
   }
-  foreach ($arg in @('--verbose', '--dangerously-skip-permissions', '--output-format', 'json', '-p', $Prompt)) {
-    [void]$psi.ArgumentList.Add($arg)
+  foreach ($a in $extraArgs) {
+    [void]$psi.ArgumentList.Add([string]$a)
   }
 
-  Log ("  claudeExe={0}" -f $claudeExe)
+  Log ("  engine={0} exe={1} risk={2}" -f $res.Engine, $res.Display, (Get-EngineRiskLabel -Engine $res.Engine))
   $proc = [System.Diagnostics.Process]::new()
   $proc.StartInfo = $psi
   $sw = [System.Diagnostics.Stopwatch]::StartNew()
   try {
-    if (-not $proc.Start()) { throw 'claude process failed to start' }
+    if (-not $proc.Start()) { throw ("{0} process failed to start" -f $res.Engine) }
+    try {
+      [string]$proc.Id | Set-Content -LiteralPath $workerPidFile -Encoding ascii -Force
+    } catch {}
     # Drain both pipes asynchronously so a verbose child cannot deadlock while
     # the parent independently pulses Show Time on wall-clock time.
     $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
@@ -608,7 +634,7 @@ function Invoke-ClaudeProcess {
       if (($now - $lastHb).TotalSeconds -ge 45) {
         $lastHb = $now
         try {
-          Invoke-ShowTime -Action heartbeat -Status running -Progress -Sentinel ("{0} · {1:n0}s" -f $HeartbeatLabel, $sw.Elapsed.TotalSeconds)
+          Invoke-ShowTime -Action heartbeat -Status running -Progress -Sentinel ("{0} · {1} · {2:n0}s" -f $res.Engine, $HeartbeatLabel, $sw.Elapsed.TotalSeconds)
         } catch {}
       }
     }
@@ -626,16 +652,31 @@ function Invoke-ClaudeProcess {
         Log ("{0}{1}" -f $LogPrefix, $(if ($line.Length -gt 500) { $line.Substring(0, 500) + '…' } else { $line }))
       }
     }
+    $usage = Parse-WorkerUsageFromText -Text $text -Engine $res.Engine
     return [pscustomobject]@{
-      Text = $text
-      ExitCode = $proc.ExitCode
-      Seconds = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
+      Text      = $text
+      ExitCode  = $proc.ExitCode
+      Seconds   = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
       LineCount = $lines.Count
+      Engine    = $res.Engine
+      Usage     = $usage
     }
   } finally {
     $sw.Stop()
+    try { Remove-Item -LiteralPath $workerPidFile -Force -ErrorAction SilentlyContinue } catch {}
     $proc.Dispose()
   }
+}
+
+# Back-compat alias (older call sites / docs)
+function Invoke-ClaudeProcess {
+  param(
+    [Parameter(Mandatory = $true)][string]$Prompt,
+    [string]$ModelName = '',
+    [string]$LogPrefix = '  | ',
+    [string]$HeartbeatLabel = 'slice live'
+  )
+  Invoke-WorkerProcess -Prompt $Prompt -ModelName $ModelName -LogPrefix $LogPrefix -HeartbeatLabel $HeartbeatLabel
 }
 
 function Invoke-SliceVerification {
@@ -709,7 +750,8 @@ Green is allowed only when every relevant check passed. Do not claim green from 
   $verifySeconds = 0
   try {
     $reviewModel = if ($VerifierModel) { $VerifierModel } else { $Model }
-    $processResult = Invoke-ClaudeProcess -Prompt $prompt -ModelName $reviewModel -LogPrefix '  verify| ' -HeartbeatLabel ("verifier live · {0}" -f $SliceId)
+    $processResult = Invoke-WorkerProcess -Prompt $prompt -ModelName $reviewModel -LogPrefix '  verify| ' `
+      -HeartbeatLabel ("verifier live · {0}" -f $SliceId) -Resolution $script:VerifierResolution
     $verifyText = $processResult.Text
     $verifySeconds = $processResult.Seconds
     $exitCode = $processResult.ExitCode
@@ -885,8 +927,9 @@ function Invoke-Slice {
   }
   $fullPrompt = $steerPrefix + $promptText
   $preview = if ($promptText.Length -gt 80) { $promptText.Substring(0, 80) + '…' } else { $promptText }
-  $null = Log ("spawn: claude -p `"$preview`" (cwd=$WorkDir)")
-  Invoke-ShowTime -Action heartbeat -Status running -Progress -Sentinel "Spawn claude -p for slice work"
+  $eng = $script:EngineId
+  $null = Log ("spawn: {0} `"$preview`" (cwd=$WorkDir)" -f $eng)
+  Invoke-ShowTime -Action heartbeat -Status running -Progress -Sentinel ("Spawn {0} for slice work" -f $eng)
 
   $startSha = ''
   try {
@@ -896,26 +939,35 @@ function Invoke-Slice {
   finally { Pop-Location }
 
   $sliceExit = 0
-  # Detached + no TTY: without skip-permissions claude waits forever on tool prompts.
-  # Refuse at process start (see boot guard); still assert here so a future code path
-  # cannot spawn a hang-prone claude.
+  # Detached + no TTY: without skip-permissions the worker waits forever on tool prompts.
   if (-not $SkipPermissions) {
     throw 'REFUSE: Invoke-Slice without -SkipPermissions would hang unattended on permission prompts'
   }
-  $processResult = Invoke-ClaudeProcess -Prompt $fullPrompt -ModelName $Model -LogPrefix '  | ' -HeartbeatLabel 'slice live'
+  $processResult = Invoke-WorkerProcess -Prompt $fullPrompt -ModelName $Model -LogPrefix '  | ' -HeartbeatLabel 'slice live' -Resolution $script:WorkerResolution
   $sliceExit = $processResult.ExitCode
   $text = $processResult.Text
   $sec = [Math]::Max(0.5, $processResult.Seconds)
   if ($text -match "unknown option\s+'?-") {
-    $argvFail = "claude argv parse failed — refuse to spin: $($Matches[0])"
+    $argvFail = ("{0} argv parse failed — refuse to spin: {1}" -f $eng, $Matches[0])
     try {
-      Write-SessionState -State 'blocked' -Outcome 'claude-argv-parse-failed'
-      Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'claude argv parse failed' -Sentinel $argvFail
+      Write-SessionState -State 'blocked' -Outcome 'worker-argv-parse-failed'
+      Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'worker argv parse failed' -Sentinel $argvFail
     } catch {}
     Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
     throw $argvFail
   }
+  # Prefer cross-engine parser; fall back to Claude-tuned Parse-UsageFromText
+  $usageObj = if ($processResult.Usage) { $processResult.Usage } else { Parse-WorkerUsageFromText -Text $text -Engine $eng }
   $usage = Parse-UsageFromText $text
+  if ($usageObj.measured) {
+    $usage = @{
+      input = [int]$usageObj.input; output = [int]$usageObj.output; measured = $true
+      cacheCreate = [int]$usageObj.cacheCreate; cacheRead = [int]$usageObj.cacheRead
+      costUsd = [double]$usageObj.costUsd; model = [string]$usageObj.model
+    }
+  } elseif ($usageObj.model -and -not $usage.model) {
+    $usage.model = $usageObj.model
+  }
   $delta = Get-GitDelta $startSha
 
   # Token saver: monolith re-reads prior outputs
@@ -933,11 +985,11 @@ function Invoke-Slice {
   $script:Stats.costUsd += [double]$usage.costUsd
   $script:Stats.modelSec += $sec
   if ($usage.measured) { $script:Stats.measured = $true }
-  # Prefer real model id from Claude JSON so the board never shows bare "default"
+  # Prefer real model id from worker JSON so the board never shows bare "default"
   if ($usage.model -and [string]$usage.model) {
     $script:Stats.model = [string]$usage.model
-    if ($script:Stats.modelSource -eq 'pending-claude-result' -or -not $script:Stats.modelSource) {
-      $script:Stats.modelSource = 'claude-result'
+    if ($script:Stats.modelSource -match 'pending-' -or -not $script:Stats.modelSource) {
+      $script:Stats.modelSource = 'worker-result'
     }
   }
   $script:Stats.filesCreated += $delta.filesCreated
@@ -993,20 +1045,28 @@ if ($modelRes.Model) {
   $script:Stats.modelSource = $modelRes.Source
 } else {
   $script:Stats.model = ''
-  $script:Stats.modelSource = 'pending-claude-result'
+  $script:Stats.modelSource = 'pending-worker-result'
 }
 if ($VerifierModel -and $VerifierModel.Trim()) {
   $script:Stats.verifierModel = $VerifierModel.Trim()
 } else {
   $script:Stats.verifierModel = $script:Stats.model
 }
-Log ("workerModel={0} source={1}" -f $(if ($script:Stats.model) { $script:Stats.model } else { '(pending first claude result)' }), $script:Stats.modelSource)
-Log ("sliceVerifier={0} verifierModel={1} repairAttempts={2}" -f $(if ($NoSliceVerifier) { 'off' } else { 'on' }), $(if ($script:Stats.verifierModel) { $script:Stats.verifierModel } else { 'same-as-worker' }), $VerifierRepairAttempts)
+$script:Stats.engine = $script:EngineId
+$script:Stats.engineDisplay = [string]$script:WorkerResolution.Display
+$script:Stats.verifierEngine = $script:VerifierEngineId
+try {
+  $null = Save-EngineChoice -ScratchDir $scratch -Engine $script:EngineId -Model $script:Stats.model `
+    -SessionId $SessionId -Display $script:WorkerResolution.Display
+} catch {}
+Log ("workerEngine={0} display={1} requested={2}" -f $script:EngineId, $script:WorkerResolution.Display, $Engine)
+Log ("workerModel={0} source={1}" -f $(if ($script:Stats.model) { $script:Stats.model } else { '(pending first worker result)' }), $script:Stats.modelSource)
+Log ("sliceVerifier={0} verifierEngine={1} verifierModel={2} repairAttempts={3}" -f $(if ($NoSliceVerifier) { 'off' } else { 'on' }), $script:VerifierEngineId, $(if ($script:Stats.verifierModel) { $script:Stats.verifierModel } else { 'same-as-worker' }), $VerifierRepairAttempts)
+Log ("engineRisk={0}" -f (Get-EngineRiskLabel -Engine $script:EngineId))
 
-# Detached runner has no TTY. Without --dangerously-skip-permissions, the first
-# tool call waits forever for a human who will never see the prompt → zombie lane.
+# Detached runner has no TTY. Without unattended flags, the first tool call waits forever.
 if (-not $SkipPermissions) {
-  Log 'FATAL: -SkipPermissions required for detached runner (no TTY). Exiting before first claude -p.'
+  Log 'FATAL: -SkipPermissions required for detached runner (no TTY). Exiting before first worker spawn.'
   try {
     Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'No SkipPermissions (would hang)' -Sentinel 'Refused: no skip-permissions'
   } catch {}
@@ -1045,8 +1105,8 @@ if ($null -eq $c) { Log 'ABORT: no ledger.md'; exit 1 }
 if (-not $c.Approved) { Log 'ABORT: ledger not Approved: yes'; exit 1 }
 if (-not (Test-Path -LiteralPath $flag)) { Log 'ABORT: autopro-on flag missing'; exit 1 }
 
-Invoke-ShowTime -Action register -Status running -Sentinel ("Runner armed · worktree isolation={0}" -f (-not $NoWorktree -and $WorkDir -ne $RepoDir))
-Invoke-StatusLog -Action event -Level info -Event ("Runner armed · isolation={0} · merge={1}" -f (-not $NoWorktree -and $WorkDir -ne $RepoDir), $MergeTarget)
+Invoke-ShowTime -Action register -Status running -Sentinel ("Runner armed · engine={0} · worktree isolation={1}" -f $script:EngineId, (-not $NoWorktree -and $WorkDir -ne $RepoDir))
+Invoke-StatusLog -Action event -Level info -Event ("Runner armed · engine={0} · isolation={1} · merge={2}" -f $script:EngineId, (-not $NoWorktree -and $WorkDir -ne $RepoDir), $MergeTarget)
 # Board URL is logged once at launch (SHOWTIME_URL / status server event). Do not re-emit a hardcoded 8770 here.
 Invoke-StatusLog -Action event -Level server -Event ("Autopro log: {0}" -f $log)
 
@@ -1195,17 +1255,19 @@ AUTOPRO_FINAL_CHECK_CMD). Your marker alone does not authorize merge.
   try {
     # Explicit work-skill brief — bare "work" often yields empty/idle sessions
     # (in=1 out=1). Instruct the next pending ledger slice end-to-end.
-    $workPrompt = @'
-Execute the work skill now on this repo worktree.
+    $workPrompt = @"
+You are an AutoPro unattended worker (engine=$($script:EngineId)). Execute the work skill now on this repo worktree.
 
 1. Read .claude/scratch/ledger.md (must be Approved: yes).
 2. Take the FIRST slice that is [pending] or [in-progress] (not [done]/[blocked]).
 3. Implement that slice fully: edit files, run checks, mark [done] with commit hash.
 4. Commit only that slice's files with a conventional message.
 5. Do NOT start the next slice. Stop after one slice.
+6. Do not wait for a human. If blocked, mark the slice [blocked] with a short reason and exit.
+7. Stay inside the current working directory / worktree. No force-push. No deleting .git.
 
 If no pending slices remain, report all done and stop.
-'@
+"@
     $sliceResult = Invoke-Slice $workPrompt
   } catch {
     Log ("STOP: Invoke-Slice threw: {0}" -f $_.Exception.Message)

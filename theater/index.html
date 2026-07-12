@@ -1380,16 +1380,24 @@ function modelLabelOf(s){
   const st = (s && s.stats) || {}
   const m = st.model || st.workerModel || s?.model || ''
   if(m && String(m).trim() && !/^default$/i.test(String(m))) return String(m).trim()
-  if(st.modelSource === 'pending-claude-result') return 'resolving…'
+  if(st.modelSource === 'pending-claude-result' || st.modelSource === 'pending-worker-result') return 'resolving…'
   return 'unknown (cli-default)'
 }
-/** Compact model chip for branch header. */
+/** Engine id (claude|codex|gemini|grok|ollama) for multi-provider fleets. */
+function engineLabelOf(s){
+  const st = (s && s.stats) || {}
+  const e = st.engine || s?.engine || ''
+  return e && String(e).trim() ? String(e).trim().toLowerCase() : ''
+}
+/** Compact model chip for branch header — engine + model (credit visibility). */
 function modelChipHtml(s){
   const m = modelLabelOf(s)
+  const eng = engineLabelOf(s)
   const cost = Number((s?.stats?.tokens?.costUsd) || 0)
   const warn = /unknown|default|resolving/i.test(m) || cost > 1
-  const tip = `Worker model: ${m}${cost?` · $${cost.toFixed(4)} session`:''} — multi-repo credit burn risk if wrong`
-  return `<span class="model-chip ${warn?'warn':''}" title="${esc(tip)}">${esc(m.length>28?m.slice(0,26)+'…':m)}</span>`
+  const label = eng ? `${eng} · ${m}` : m
+  const tip = `Worker: ${eng||'?'}${m?` / ${m}`:''}${cost?` · $${cost.toFixed(4)} session`:''} — multi-repo credit burn risk if wrong`
+  return `<span class="model-chip ${warn?'warn':''}" title="${esc(tip)}">${esc(label.length>32?label.slice(0,30)+'…':label)}</span>`
 }
 
 function repoLabel(s){
@@ -2017,7 +2025,9 @@ function renderOps(){
   const healthy=!['stalled','blocked','needs_input','error'].includes(s.status)
   const st=s.stats||{}, tok=st.tokens||{}, spd=st.speed||{}, code=st.code||{}
   const modelLabel = modelLabelOf(s)
+  const engLabel = engineLabelOf(s) || '—'
   const verModel = (st.verifierModel && String(st.verifierModel)) || modelLabel
+  const verEng = (st.verifierEngine && String(st.verifierEngine)) || engLabel
   const costUsd = Number(tok.costUsd||0)
   const clock=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})
 
@@ -2069,8 +2079,9 @@ function renderOps(){
         <div class="ms-row"><span>Code remaining:</span><b class="warn">${remaining}</b></div>
         <div class="ms-row"><span>Waiting on you:</span><b class="bad">${blocked}</b></div>
         <div class="ms-row"><span>Status:</span><b class="cyan">${esc(s.status||'—')}</b></div>
+        <div class="ms-row"><span>Engine:</span><b class="cyan" title="CLI worker: claude|codex|gemini|grok|ollama">${esc(engLabel)}</b></div>
         <div class="ms-row"><span>Model:</span><b class="warn" title="LLM this worker is calling — multi-repo credit risk">${esc(modelLabel)}</b></div>
-        <div class="ms-row"><span>Verifier model:</span><b class="cyan">${esc(verModel)}</b></div>
+        <div class="ms-row"><span>Verifier:</span><b class="cyan">${esc(verEng)} · ${esc(verModel)}</b></div>
         <div class="ms-row"><span>Session $:</span><b class="${costUsd>0?'warn':'ok'}">$${costUsd.toFixed(4)}</b></div>
         <div class="ms-row"><span>Repo:</span><b>${esc(repoLabel(s))}</b></div>
         <div class="ms-row"><span>Branch:</span><b>${branchTag(s)}</b></div>
@@ -2119,8 +2130,8 @@ function renderOps(){
     <div class="${panelCls('tokens',false)}">
       <h4 data-panel="tokens"><span>📊 TOKEN STATS · MODEL</span><span class="chev">${chev('tokens')}</span></h4>
       <div class="body">
-        <div style="font-size:11px;margin-bottom:6px">MODEL <b class="warn">${esc(modelLabel)}</b></div>
-        <div style="font-size:10px;color:var(--muted);margin-bottom:6px">verifier <b style="color:var(--ink)">${esc(verModel)}</b> · session <b class="${costUsd>0?'warn':'ok'}">$${costUsd.toFixed(4)}</b>${st.modelSource?` · src ${esc(String(st.modelSource))}`:''}</div>
+        <div style="font-size:11px;margin-bottom:6px">ENGINE <b class="cyan">${esc(engLabel)}</b> · MODEL <b class="warn">${esc(modelLabel)}</b></div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:6px">verifier <b style="color:var(--ink)">${esc(verEng)} · ${esc(verModel)}</b> · session <b class="${costUsd>0?'warn':'ok'}">$${costUsd.toFixed(4)}</b>${st.modelSource?` · src ${esc(String(st.modelSource))}`:''}</div>
         SAVED <b class="ok">${Math.round(tok.saved||0)}</b>
         <div class="sg" style="margin-top:6px">
           <div><div class="k">TOK/S</div><div class="v">${Number(spd.tokPerSecAvg||spd.tokPerSec||0).toFixed(1)}</div></div>
@@ -3037,9 +3048,13 @@ function renderClaw(){
   const nWorkers = orchP.workers
   // ORCH head: status strip (desk or live orch chat). Big invader only if a real ORCH session exists.
   // Models in use across SA workers (credit burn glance)
-  const modelsInUse = [...new Set(workerSessions().map(modelLabelOf).filter(Boolean))]
+  const modelsInUse = [...new Set(workerSessions().map(s=>{
+    const e = engineLabelOf(s)
+    const m = modelLabelOf(s)
+    return e ? `${e}:${m}` : m
+  }).filter(Boolean))]
   const modelPill = modelsInUse.length
-    ? `<span class="orch-pill ${modelsInUse.some(m=>/unknown|default|resolving/i.test(m))?'bad':'run'}" title="Models this fleet is calling">${esc(modelsInUse.map(m=>m.length>22?m.slice(0,20)+'…':m).join(' · '))}</span>`
+    ? `<span class="orch-pill ${modelsInUse.some(m=>/unknown|default|resolving/i.test(m))?'bad':'run'}" title="Engines/models this fleet is calling">${esc(modelsInUse.map(m=>m.length>28?m.slice(0,26)+'…':m).join(' · '))}</span>`
     : `<span class="orch-pill">no model yet</span>`
   const orchStatusHtml = `<div class="orch-status-row" title="${esc(orchP.detail)}">
       <span class="orch-role">${orchP.kind==='live'?'ORCH CHAT':'ORCH DESK'}</span>
