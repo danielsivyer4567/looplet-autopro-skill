@@ -126,9 +126,40 @@ Approved: yes @ 2026-07-10
 ## P0-safe — Pause point  [blocked]
 '@ | Set-Content -LiteralPath $tmp -Encoding utf8
 
+# ---- Join gate: no board entry without sessionId + repo name + branch ----
+try {
+  $code = 0
+  try {
+    Invoke-RestMethod -Method POST -Uri "$base/api/sessions" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
+      repoId = 'Looplet'; branch = 'main'; status = 'running'
+    } | ConvertTo-Json) | Out-Null
+  } catch { $code = [int]$_.Exception.Response.StatusCode }
+  if ($code -eq 400) { Ok 'join gate: no sessionId -> 400' } else { Bad "join gate sessionId gave $code" }
+} catch { Bad "join gate sessionId $_" }
+
+try {
+  $code = 0
+  try {
+    Invoke-RestMethod -Method POST -Uri "$base/api/sessions" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
+      sessionId = 'v2bad1'; repoId = 'repo'; branch = 'main'; status = 'running'
+    } | ConvertTo-Json) | Out-Null
+  } catch { $code = [int]$_.Exception.Response.StatusCode }
+  if ($code -eq 400) { Ok 'join gate: fake repo -> 400' } else { Bad "join gate repo gave $code" }
+} catch { Bad "join gate repo $_" }
+
+try {
+  $code = 0
+  try {
+    Invoke-RestMethod -Method POST -Uri "$base/api/sessions" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
+      sessionId = 'v2bad2'; repoId = 'Looplet'; status = 'running'
+    } | ConvertTo-Json) | Out-Null
+  } catch { $code = [int]$_.Exception.Response.StatusCode }
+  if ($code -eq 400) { Ok 'join gate: no branch -> 400' } else { Bad "join gate branch gave $code" }
+} catch { Bad "join gate branch $_" }
+
 try {
   $r = Invoke-RestMethod -Method POST -Uri "$base/api/sessions" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
-    sessionId = $sa; repoId = 'repo-a'; status = 'running'; ledgerPath = $tmp; ledgerHash = 'hash-a'; ledgerTitle = 'test'
+    sessionId = $sa; repoId = 'repo-a'; branch = 'test/branch-a'; status = 'running'; ledgerPath = $tmp; ledgerHash = 'hash-a'; ledgerTitle = 'test'
     stats = @{
       measured = $true
       tokens = @{ input = 1000; output = 500; total = 1500; monolithEst = 4000; saved = 2500; savePct = 0.625 }
@@ -146,7 +177,7 @@ try {
 
 try {
   $null = Invoke-RestMethod -Method POST -Uri "$base/api/sessions" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
-    sessionId = $sb; repoId = 'repo-b'; status = 'running'
+    sessionId = $sb; repoId = 'repo-b'; branch = 'test/branch-b'; status = 'running'
     todo = @(@{ id = 'SC-01'; text = 'One'; state = 'pending' })
   } | ConvertTo-Json -Depth 5)
   Ok 'register B multi-chat'
@@ -159,7 +190,7 @@ try {
 
 try {
   $null = Invoke-RestMethod -Method POST -Uri "$base/api/sessions" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
-    sessionId = $sd; repoId = 'repo-old-active'; status = 'running'; ledgerHash = 'old-hash'; ledgerTitle = 'old ledger'; pid = $PID
+    sessionId = $sd; repoId = 'repo-old-active'; branch = 'test/old-active'; status = 'running'; ledgerHash = 'old-hash'; ledgerTitle = 'old ledger'; pid = $PID
     todo = @(@{ id = 'SC-99'; text = 'Old active'; state = 'pending' })
   } | ConvertTo-Json -Depth 5)
   $pre = Invoke-RestMethod -Method POST -Uri "$base/api/preflight" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
@@ -175,7 +206,7 @@ try {
 
 try {
   $null = Invoke-RestMethod -Method POST -Uri "$base/api/sessions" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
-    sessionId = $stale; repoId = 'repo-old-stale'; status = 'running'; ledgerHash = 'old-hash'; ledgerTitle = 'old ledger'; pid = 0
+    sessionId = $stale; repoId = 'repo-old-stale'; branch = 'test/old-stale'; status = 'running'; ledgerHash = 'old-hash'; ledgerTitle = 'old ledger'; pid = 0
     todo = @(@{ id = 'SC-98'; text = 'Old stale'; state = 'pending' })
   } | ConvertTo-Json -Depth 5)
   $staleFile = Join-Path $SessionDir "$stale.json"
@@ -197,7 +228,7 @@ try {
   $repoHandover = Join-Path $env:TEMP "showtime-handover-$complete.md"
   'repo handover body' | Set-Content -LiteralPath $repoHandover -Encoding utf8
   $null = Invoke-RestMethod -Method POST -Uri "$base/api/sessions" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
-    sessionId = $complete; repoId = 'repo-complete'; status = 'running'; ledgerHash = 'hash-complete'; ledgerTitle = 'complete ledger'; pid = $PID; handoverPath = $repoHandover
+    sessionId = $complete; repoId = 'repo-complete'; branch = 'test/complete'; status = 'running'; ledgerHash = 'hash-complete'; ledgerTitle = 'complete ledger'; pid = $PID; handoverPath = $repoHandover
     todo = @(@{ id = 'SC-77'; text = 'Done'; state = 'done' })
   } | ConvertTo-Json -Depth 5)
   $null = Invoke-RestMethod -Method POST -Uri "$base/api/sessions/$complete/heartbeat" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
@@ -222,6 +253,24 @@ try {
   $cs = Invoke-RestMethod -Method POST -Uri "$base/api/sessions/$sa/consume-steers" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body '{}'
   if ($cs.steers.Count -ge 1) { Ok 'steer + consume' } else { Bad 'steer' }
 } catch { Bad "steer $_" }
+
+try {
+  $n = Invoke-RestMethod -Method POST -Uri "$base/api/sessions/$sa/nudge" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body '{"listenSec":30}'
+  if ($n.nudge.status -eq 'listening' -and $n.nudge.listenUntil) { Ok 'nudge listen window' } else { Bad 'nudge listen' }
+  $null = Invoke-RestMethod -Method POST -Uri "$base/api/sessions/$sa/heartbeat" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
+    status = 'running'; progress = $true; pid = $PID
+  } | ConvertTo-Json)
+  $list2 = Invoke-RestMethod "$base/api/sessions" -Headers $AuthH -TimeoutSec 5
+  $saSess = @($list2.sessions) | Where-Object { $_.sessionId -eq $sa } | Select-Object -First 1
+  if ($saSess.nudge.status -eq 'acked') { Ok 'nudge acked on progress heartbeat' } else { Bad "nudge ack status=$($saSess.nudge.status)" }
+} catch { Bad "nudge $_" }
+
+try {
+  $html = (Invoke-WebRequest -Uri "$base/" -UseBasicParsing -TimeoutSec 5).Content
+  if ($html -match 'btn-nudge' -and $html -match 'orch-click-here|CLICK HERE|data-nudge') {
+    Ok 'UI nudge / escalate markers'
+  } else { Bad 'UI nudge markers' }
+} catch { Bad "UI nudge $_" }
 
 try {
   $html = (Invoke-WebRequest -Uri "$base/" -UseBasicParsing -TimeoutSec 5).Content

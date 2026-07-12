@@ -4,16 +4,44 @@
   Creates an isolated git worktree for this session so finish can merge + prune
   without dragging other chats' dirty files into the commit.
 
+  Unattended autonomy is OFF by default. Arming requires both risk switches
+  (skip-permissions is otherwise a silent zero-human loop):
+
+    -AllowDangerousSkipPermissions
+    -IAcceptUnattendedRisk
+
   Usage:
-    pwsh -File launch-showtime.ps1 -Root <scratch root> -RepoDir <repo with ledger>
+    pwsh -File launch-showtime.ps1 -Root <scratch root> -RepoDir <repo with ledger> `
+      -AllowDangerousSkipPermissions -IAcceptUnattendedRisk
 #>
 param(
   [Parameter(Mandatory = $true)][string]$Root,
   [Parameter(Mandatory = $true)][string]$RepoDir,
   [string]$Model = '',
+  # Worker engine: auto (default) | claude | codex | gemini | grok | ollama
+  [string]$Engine = 'auto',
+  [string]$VerifierEngine = '',
+  [switch]$AllowOllama,
   [switch]$NoBrowser,
+  # Headless: skip theater ensure/register/open-board; still arm runner + worktree.
+  # Watch via: Get-Content .claude\scratch\autopro.log -Wait
+  [switch]$NoShowTime,
   [switch]$NoWorktree,
   [switch]$PushOnFinish,
+  # Required together: unattended worker risk (engine-specific skip/yolo/bypass flags)
+  [switch]$AllowDangerousSkipPermissions,
+  [switch]$IAcceptUnattendedRisk,
+  # Escape hatch: merge on model FINAL_CHECK_STATUS=green without npm/script gate
+  [switch]$AllowModelOnlyFinalCheck,
+  # Default-on fresh verifier after every slice. UI diffs require Playwright
+  # screenshot + zero console/page errors; red results get bounded repair runs.
+  [switch]$NoSliceVerifier,
+  [string]$VerifierModel = '',
+  [ValidateRange(0, 3)]
+  [int]$VerifierRepairAttempts = 1,
+  # Kill hung worker processes after N minutes (0 = no wall-clock kill; still use stall alarm)
+  [ValidateRange(0, 480)]
+  [int]$MaxSliceMinutes = 90,
   # base = all mini-branches rejoin the epic branch you armed from (default)
   # main = each ledger session merges into main/master after check
   [ValidateSet('base', 'main')]
@@ -33,6 +61,31 @@ $scratch = Join-Path $Root '.claude\scratch'
 $ledger = Join-Path $RepoDir '.claude\scratch\ledger.md'
 $sessionStatePath = Join-Path $scratch 'autopro-session.json'
 
+. (Join-Path $SkillScripts 'worker-engines.ps1')
+
+if (-not $AllowDangerousSkipPermissions -or -not $IAcceptUnattendedRisk) {
+  throw @'
+Refusing to arm unattended autopro without explicit risk acceptance.
+
+A detached runner has no TTY. Without engine unattended flags (Claude skip-permissions,
+Codex bypass-approvals, Gemini yolo, Grok always-approve) the first tool call waits
+forever for a human who never sees the prompt (zombie lane).
+
+Pass BOTH switches to arm:
+  -AllowDangerousSkipPermissions
+  -IAcceptUnattendedRisk
+
+Example (auto-pick first available engine: claude → codex → gemini → grok):
+  pwsh -NoProfile -File launch-showtime.ps1 -Root <root> -RepoDir <repo> `
+    -AllowDangerousSkipPermissions -IAcceptUnattendedRisk
+
+Pin an engine:
+  … -Engine codex -Model o3
+  … -Engine gemini
+  … -Engine grok
+'@
+}
+
 if (-not (Test-Path -LiteralPath $ledger)) {
   throw "No ledger at $ledger — run ledger first."
 }
@@ -40,6 +93,58 @@ $t = Get-Content -LiteralPath $ledger -Raw
 if (-not [regex]::IsMatch($t, '(?im)^Approved:\s*yes')) {
   throw 'Ledger not Approved: yes — approve first.'
 }
+
+# Independent merge gate must exist (or explicit model-only escape) BEFORE we
+# detach a runner that would otherwise burn the whole ledger and then block merge.
+. (Join-Path $SkillScripts 'showtime-final-check.ps1')
+$preGate = Resolve-IndependentFinalGate -WorkDir $RepoDir
+if ($preGate.Kind -eq 'none' -and -not $AllowModelOnlyFinalCheck) {
+  throw @"
+Refusing to arm: no independent final-check command for this repo.
+
+Detached autopro would run every slice, then block merge with no gate configured.
+Configure one of:
+  - package.json scripts.gate  (e.g. `"gate`": `"npm test`")
+  - scripts/final-check.ps1
+  - `$env:AUTOPRO_FINAL_CHECK_CMD
+Or pass -AllowModelOnlyFinalCheck to accept model markers alone (risky).
+
+Resolved work dir probe: $RepoDir
+"@
+}
+Write-Output ("INDEPENDENT_GATE kind={0} display={1}" -f $preGate.Kind, $preGate.Display)
+
+# Engine preflight BEFORE arming — fail fast with install hints (prompt-and-play)
+$allEngines = Get-AllEngineResolutions
+Write-Output (Format-EnginePreflightReport -Resolutions $allEngines)
+try {
+  $resolvedEngine = Resolve-AutoproEngine -Requested $Engine -AllowOllama:$AllowOllama
+} catch {
+  throw @"
+ENGINE_PREFLIGHT_FAILED: $($_.Exception.Message)
+
+Run doctor for a full report:
+  pwsh -NoProfile -File `"$SkillScripts\autopro-doctor.ps1`" -RepoDir `"$RepoDir`"
+"@
+}
+if ($VerifierEngine -and $VerifierEngine.Trim()) {
+  try {
+    $null = Resolve-AutoproEngine -Requested $VerifierEngine.Trim() -AllowOllama:$AllowOllama
+  } catch {
+    throw "VERIFIER_ENGINE_PREFLIGHT_FAILED: $($_.Exception.Message)"
+  }
+}
+# Honor env verifier/model when flags empty (prompt-and-play defaults)
+if (-not $Model -and $env:AUTOPRO_MODEL) { $Model = $env:AUTOPRO_MODEL.Trim() }
+if (-not $VerifierEngine -and $env:AUTOPRO_VERIFIER_ENGINE) { $VerifierEngine = $env:AUTOPRO_VERIFIER_ENGINE.Trim() }
+if (-not $VerifierModel -and $env:AUTOPRO_VERIFIER_MODEL) { $VerifierModel = $env:AUTOPRO_VERIFIER_MODEL.Trim() }
+
+Write-Output ("ENGINE_SELECTED={0}" -f $resolvedEngine.Engine)
+Write-Output ("ENGINE_DISPLAY={0}" -f $resolvedEngine.Display)
+Write-Output ("ENGINE_RISK={0}" -f (Get-EngineRiskLabel -Engine $resolvedEngine.Engine))
+if ($Model) { Write-Output ("MODEL={0}" -f $Model) }
+if ($VerifierEngine) { Write-Output ("VERIFIER_ENGINE={0}" -f $VerifierEngine) }
+if ($MaxSliceMinutes -gt 0) { Write-Output ("MAX_SLICE_MINUTES={0}" -f $MaxSliceMinutes) }
 
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 # Per-session flag: each runner owns its own kill switch, so lanes can't disarm
@@ -69,7 +174,8 @@ if (Test-Path -LiteralPath $sessionStatePath) {
 
 if ($allFlags.Count -and $priorState -and $priorState.ledgerHash -and $priorState.ledgerHash -ne $ledgerHash) {
   Write-Output ("NEW_LEDGER_DETECTED oldHash={0} oldTitle={1} newHash={2} newTitle={3}" -f $priorState.ledgerHash, $priorState.ledgerTitle, $ledgerHash, $ledgerTitle)
-  $runners = @(Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" -ErrorAction SilentlyContinue |
+  $runners = @(Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" `
+    -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
     Where-Object {
       $_.CommandLine -and
       $_.CommandLine -match 'autopro-runner\.ps1' -and
@@ -104,7 +210,8 @@ if ($allFlags.Count -and $priorState -and $priorState.ledgerHash -and $priorStat
 # The old behavior warned and launched a second runner anyway — that is exactly
 # how three runners ended up racing one ledger. Refuse instead.
 if ($allFlags.Count) {
-  $liveRunners = @(Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" -ErrorAction SilentlyContinue |
+  $liveRunners = @(Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" `
+    -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -and $_.CommandLine -match 'autopro-runner\.ps1' -and $_.CommandLine -like "*$Root*" })
   if ($liveRunners.Count) {
     $allFlags | ForEach-Object { Write-Output ("EXISTING_FLAG={0}" -f $_.Name) }
@@ -251,31 +358,44 @@ if (Test-Path -LiteralPath $StatusPs1) {
 }
 
 # --- Production preflight (before new lane appears) ---------------------------
-# 1) Ensure board server
+# 1) Ensure board server (skipped when -NoShowTime)
 # 2) Stale process check (orphan runners for this root without a live flag)
 # 3) Flush undelivered handovers → operator outbox + board folders
 # 4) Wipe complete/stale lanes from screen so new arm replaces old work
-Write-Output 'Preflight: ensure Show Time + clear stale board state…'
-& pwsh -NoProfile -File $Register -Action ensure 2>&1 | ForEach-Object { Write-Output "preflight> $_" }
+$boardUrl = $null
+if (-not $NoShowTime) {
+  Write-Output 'Preflight: ensure Show Time + clear stale board state…'
+  & pwsh -NoProfile -File $Register -Action ensure 2>&1 | ForEach-Object { Write-Output "preflight> $_" }
 
-# Resolve board URL once (after ensure writes server.port). Used for open + TV + SHOWTIME_URL.
-$boardUrl = Resolve-ShowTimeBoardUrl
-if (Test-Path -LiteralPath $StatusPs1) {
-  try {
-    & pwsh -NoProfile -File $StatusPs1 -RepoDir $RepoDir -Action event -SessionId $sessionId -Level server -Event ("Show Time board: {0}" -f $boardUrl) -LedgerPath $ledger 2>&1 |
-      ForEach-Object { Write-Output "status> $_" }
-  } catch {}
+  # Resolve board URL once (after ensure writes server.port). Used for open + TV + SHOWTIME_URL.
+  $boardUrl = Resolve-ShowTimeBoardUrl
+  if (Test-Path -LiteralPath $StatusPs1) {
+    try {
+      & pwsh -NoProfile -File $StatusPs1 -RepoDir $RepoDir -Action event -SessionId $sessionId -Level server -Event ("Show Time board: {0}" -f $boardUrl) -LedgerPath $ledger 2>&1 |
+        ForEach-Object { Write-Output "status> $_" }
+    } catch {}
+  }
+} else {
+  Write-Output 'Preflight: -NoShowTime — skipping theater ensure/register/open'
+  if (Test-Path -LiteralPath $StatusPs1) {
+    try {
+      & pwsh -NoProfile -File $StatusPs1 -RepoDir $RepoDir -Action event -SessionId $sessionId -Level info -Event 'Headless arm (-NoShowTime) · watch autopro.log' -LedgerPath $ledger 2>&1 |
+        ForEach-Object { Write-Output "status> $_" }
+    } catch {}
+  }
 }
 
 # Runner scan is informational here; different-ledger stale cleanup above uses scoped stop-autopro.
 try {
-  $runners = Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" -ErrorAction SilentlyContinue |
+  # OperationTimeoutSec: bare Get-CimInstance Win32_Process can hang for minutes on busy WMI.
+  $runners = Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" `
+    -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
     Where-Object {
       $_.CommandLine -and
       $_.CommandLine -match 'autopro-runner\.ps1' -and
       $_.CommandLine -like "*$Root*"
     }
-  foreach ($rp in $runners) {
+  foreach ($rp in @($runners)) {
     try {
       $p = Get-Process -Id $rp.ProcessId -ErrorAction Stop
       $ageMin = ((Get-Date) - $p.StartTime).TotalMinutes
@@ -293,75 +413,142 @@ try {
 }
 
 # Board API preflight: wipe complete/stale sessions + deliver pending handovers
+if (-not $NoShowTime) {
+  try {
+    $portFile = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater\server.port'
+    $port = 8770
+    if (Test-Path -LiteralPath $portFile) {
+      $p = (Get-Content -LiteralPath $portFile -Raw).Trim()
+      if ($p -match '^\d+$') { $port = [int]$p }
+    }
+    # Join the living board. Never let an automatic arm kill a live lane from
+    # another ledger; the server may still prune complete/dead/stale sessions.
+    $preBody = @{
+      ledgerHash = $ledgerHash
+      ledgerTitle = $ledgerTitle
+      staleAfterMs = ($StaleAfterMinutes * 60 * 1000)
+      killForeignLedgers = $false
+      forceKillActiveForeign = $false
+    } | ConvertTo-Json -Compress
+    $tokFile = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater\server.token'
+    $tok = if (Test-Path -LiteralPath $tokFile) { (Get-Content -LiteralPath $tokFile -Raw).Trim() } else { '' }
+    $pre = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/preflight" -Method POST -ContentType 'application/json' -Headers @{ 'X-Showtime-Token' = $tok } -Body $preBody -TimeoutSec 8
+    Write-Output ("preflight> wiped={0} handoversFlushed={1} outbox={2}" -f @($pre.wiped).Count, $pre.handoversFlushed, $pre.outbox)
+    if ($pre.wiped) {
+      foreach ($w in @($pre.wiped)) {
+        Write-Output ("preflight> wiped session {0} ({1})" -f $w.sessionId, $w.why)
+      }
+    }
+    if ($pre.kept) {
+      foreach ($k in @($pre.kept)) {
+        Write-Output ("preflight> kept active old session {0} ({1})" -f $k.sessionId, $k.why)
+      }
+    }
+  } catch {
+    Write-Output "preflight> board preflight warn: $($_.Exception.Message)"
+  }
+
+  # Ensure Show Time server + register (do not open browser yet — discovery below).
+  # OpenRegister: risk switches already accepted — skip interactive join wait so
+  # prompt-and-play arms do not sit on "Approve on board" for 20s+ (and never hang).
+  Write-Output 'Preflight: register lane (OpenRegister · unattended risk accepted)…'
+  $regArgs = @(
+    '-NoProfile', '-File', $Register,
+    '-Action', 'register',
+    '-OpenRegister',
+    '-SessionId', $sessionId,
+    '-RepoDir', $workDir,
+    '-Root', $Root,
+    '-LedgerPath', $ledger,
+    '-LedgerHash', $ledgerHash,
+    '-LedgerTitle', $ledgerTitle,
+    '-LogPath', (Join-Path $scratch 'autopro.log'),
+    '-Status', 'running',
+    '-Engine', $resolvedEngine.Engine
+  )
+  if ($Model) { $regArgs += @('-Model', $Model) }
+  if ($VerifierEngine) { $regArgs += @('-VerifierEngine', $VerifierEngine) }
+  if ($VerifierModel) { $regArgs += @('-VerifierModel', $VerifierModel) }
+  & pwsh @regArgs | ForEach-Object { Write-Output $_ }
+}
+
+# Detach runner.
+# IMPORTANT: RedirectStandard* forces UseShellExecute=false, which keeps the child
+# inside the parent job object — hosts that kill the launcher job also kill the
+# runner mid-slice (seen 2026-07-11: RUNNER_PID dies, orphaned claude -p).
+# UseShellExecute=true + WindowStyle Hidden breaks away from the job. Progress
+# still lands in `.claude/scratch/autopro.log` (runner Log() → Add-Content).
+# Quote every path/title so () and unicode in ledger titles stay one argv.
+function Quote-Arg([string]$s) {
+  if ($null -eq $s) { return '""' }
+  if ($s -match '[\s"()]') { return '"' + ($s -replace '"', '\"') + '"' }
+  return $s
+}
+$runnerArgParts = @(
+  '-NoProfile', '-File', (Quote-Arg $Runner),
+  '-Root', (Quote-Arg $Root),
+  '-RepoDir', (Quote-Arg $RepoDir),
+  '-WorktreeDir', (Quote-Arg $workDir),
+  '-SessionId', (Quote-Arg $sessionId),
+  '-LedgerHash', (Quote-Arg $ledgerHash),
+  '-LedgerTitle', (Quote-Arg $ledgerTitle),
+  '-MergeTarget', $MergeTarget,
+  '-SkipPermissions',
+  '-VerifierRepairAttempts', $VerifierRepairAttempts
+)
+if ($NoShowTime) { $runnerArgParts += '-NoShowTime' }
+if ($Model) { $runnerArgParts += @('-Model', (Quote-Arg $Model)) }
+# Pass resolved engine id (not "auto") so runner doesn't re-roll if PATH changes mid-flight
+$runnerArgParts += @('-Engine', (Quote-Arg $resolvedEngine.Engine))
+if ($VerifierEngine) { $runnerArgParts += @('-VerifierEngine', (Quote-Arg $VerifierEngine)) }
+if ($AllowOllama) { $runnerArgParts += '-AllowOllama' }
+if ($NoWorktree) { $runnerArgParts += '-NoWorktree' }
+if ($PushOnFinish) { $runnerArgParts += '-PushOnFinish' }
+if ($AllowModelOnlyFinalCheck) { $runnerArgParts += '-AllowModelOnlyFinalCheck' }
+if ($NoSliceVerifier) { $runnerArgParts += '-NoSliceVerifier' }
+if ($VerifierModel) { $runnerArgParts += @('-VerifierModel', (Quote-Arg $VerifierModel)) }
+if ($MaxSliceMinutes -gt 0) { $runnerArgParts += @('-MaxSliceMinutes', "$MaxSliceMinutes") }
+if ($baseBranch) { $runnerArgParts += @('-BaseBranch', (Quote-Arg $baseBranch)) }
+if ($MainBranch) { $runnerArgParts += @('-MainBranch', (Quote-Arg $MainBranch)) }
+$runnerArgLine = ($runnerArgParts -join ' ')
+$pwshExe = (Get-Command pwsh).Source
+# Durable detach: Win32_Process.Create starts outside the parent Job Object.
+# Process.Start / Start-Process (even UseShellExecute=true) often stay in the
+# launcher job — Grok/CI/agent shells kill the whole job when the launch
+# command ends, murdering the runner mid-slice (2026-07-11 twice).
+$commandLine = '"{0}" {1}' -f $pwshExe, $runnerArgLine
+$runnerPid = 0
 try {
-  $portFile = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater\server.port'
-  $port = 8770
-  if (Test-Path -LiteralPath $portFile) {
-    $p = (Get-Content -LiteralPath $portFile -Raw).Trim()
-    if ($p -match '^\d+$') { $port = [int]$p }
+  $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+    CommandLine      = $commandLine
+    CurrentDirectory = $workDir
   }
-  $preBody = @{ ledgerHash = $ledgerHash; ledgerTitle = $ledgerTitle; staleAfterMs = ($StaleAfterMinutes * 60 * 1000) } | ConvertTo-Json -Compress
-  $tokFile = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater\server.token'
-  $tok = if (Test-Path -LiteralPath $tokFile) { (Get-Content -LiteralPath $tokFile -Raw).Trim() } else { '' }
-  $pre = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/preflight" -Method POST -ContentType 'application/json' -Headers @{ 'X-Showtime-Token' = $tok } -Body $preBody -TimeoutSec 8
-  Write-Output ("preflight> wiped={0} handoversFlushed={1} outbox={2}" -f @($pre.wiped).Count, $pre.handoversFlushed, $pre.outbox)
-  if ($pre.wiped) {
-    foreach ($w in @($pre.wiped)) {
-      Write-Output ("preflight> wiped session {0} ({1})" -f $w.sessionId, $w.why)
-    }
-  }
-  if ($pre.kept) {
-    foreach ($k in @($pre.kept)) {
-      Write-Output ("preflight> kept active old session {0} ({1})" -f $k.sessionId, $k.why)
-    }
+  if ($created.ReturnValue -eq 0 -and $created.ProcessId) {
+    $runnerPid = [int]$created.ProcessId
+    Write-Output ("RUNNER_DETACH=Win32_Process.Create")
+  } else {
+    Write-Output ("RUNNER_DETACH_WARN return={0} — falling back to cmd start" -f $created.ReturnValue)
   }
 } catch {
-  Write-Output "preflight> board preflight warn: $($_.Exception.Message)"
+  Write-Output ("RUNNER_DETACH_WARN {0} — falling back to cmd start" -f $_.Exception.Message)
 }
-
-# Ensure Show Time server + register (do not open browser yet — discovery below)
-$regArgs = @(
-  '-NoProfile', '-File', $Register,
-  '-Action', 'register',
-  '-SessionId', $sessionId,
-  '-RepoDir', $workDir,
-  '-Root', $Root,
-  '-LedgerPath', $ledger,
-  '-LedgerHash', $ledgerHash,
-  '-LedgerTitle', $ledgerTitle,
-  '-LogPath', (Join-Path $scratch 'autopro.log'),
-  '-Status', 'running'
-)
-& pwsh @regArgs | ForEach-Object { Write-Output $_ }
-
-# Detach runner (quoted paths for spaces).
-# UseShellExecute=true so the runner is NOT bound to this launcher's job object
-# (hosts that kill process trees would otherwise murder the runner mid-slice).
-# Progress is written by the runner itself to `.claude/scratch/autopro.log`.
-$runnerArg = "-NoProfile -File `"$Runner`" -Root `"$Root`" -RepoDir `"$RepoDir`" -WorktreeDir `"$workDir`" -SessionId `"$sessionId`" -LedgerHash `"$ledgerHash`" -LedgerTitle `"$ledgerTitle`" -MergeTarget `"$MergeTarget`""
-if ($Model) { $runnerArg += " -Model `"$Model`"" }
-if ($NoWorktree) { $runnerArg += ' -NoWorktree' }
-if ($PushOnFinish) { $runnerArg += ' -PushOnFinish' }
-if ($baseBranch) { $runnerArg += " -BaseBranch `"$baseBranch`"" }
-if ($MainBranch) { $runnerArg += " -MainBranch `"$MainBranch`"" }
-$pwshExe = (Get-Command pwsh).Source
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = $pwshExe
-$psi.Arguments = $runnerArg
-$psi.WorkingDirectory = $workDir
-$psi.UseShellExecute = $true
-$psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-$proc = [System.Diagnostics.Process]::Start($psi)
-$runnerPid = if ($proc) { $proc.Id } else { 0 }
-# Best-effort resolve if Start didn't return a useful handle
 if (-not $runnerPid) {
-  Start-Sleep -Milliseconds 600
-  $runnerProc = Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" |
-    Where-Object { $_.CommandLine -and $_.CommandLine -like '*autopro-runner.ps1*' -and $_.CommandLine -like "*$sessionId*" } |
-    Select-Object -First 1
-  if ($runnerProc) { $runnerPid = $runnerProc.ProcessId }
+  # Fallback: cmd start opens a new window group (usually outside the job).
+  $cmdLine = '/c start "autopro-{0}" /MIN "{1}" {2}' -f $sessionId, $pwshExe, $runnerArgLine
+  $fallback = Start-Process -FilePath 'cmd.exe' -ArgumentList $cmdLine -WindowStyle Hidden -PassThru
+  Start-Sleep -Milliseconds 1000
+  $runnerPid = if ($fallback) { $fallback.Id } else { 0 }
+  Write-Output 'RUNNER_DETACH=cmd-start'
+}
+Start-Sleep -Milliseconds 600
+Write-Output ("RUNNER_PID={0}" -f $runnerPid)
+Write-Output ("RUNNER_ARGS_LEN={0}" -f $runnerArgLine.Length)
+if ($NoShowTime) {
+  Write-Output 'HEADLESS=1'
+  Write-Output ("WATCH=Get-Content `"{0}`" -Wait -Tail 40" -f (Join-Path $scratch 'autopro.log'))
 }
 
+$logPath = Join-Path $scratch 'autopro.log'
 try {
   [ordered]@{
     sessionId   = $sessionId
@@ -371,45 +558,132 @@ try {
     workDir     = $workDir
     runnerPid   = $runnerPid
     mergeTarget = $MergeTarget
+    engine      = $resolvedEngine.Engine
+    engineDisplay = $resolvedEngine.Display
+    model       = $Model
     state       = 'armed'
+    outcome     = 'launching'
     updatedAt   = (Get-Date).ToString('o')
   } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $sessionStatePath -Encoding utf8
   Write-Output "SESSION_STATE=$sessionStatePath"
 } catch {
   Write-Output "SESSION_STATE_WARN=$($_.Exception.Message)"
 }
-
-# Companion (keep if healthy) then open the board in a real browser tab.
-# The TV card in chat is NOT a substitute for opening localhost.
-Write-Output 'Ensure Looplet companion (keep if healthy)…'
 try {
-  Ensure-LoopletCompanion 2>&1 | ForEach-Object { Write-Output "companion> $_" }
-} catch {
-  Write-Output "companion> ensure warn: $($_.Exception.Message)"
+  $null = Save-EngineChoice -ScratchDir $scratch -Engine $resolvedEngine.Engine -Model $Model `
+    -SessionId $sessionId -Display $resolvedEngine.Display
+} catch {}
+
+# Boot liveness: refuse to leave a "healthy" session if the runner never arms.
+# Detects silent-start class (flag on, no armed: line, dead/missing PID).
+function Test-PidAliveLocal([int]$procId) {
+  if ($procId -le 0) { return $false }
+  try { Get-Process -Id $procId -ErrorAction Stop | Out-Null; return $true } catch { return $false }
+}
+$bootTimeoutSec = 45
+$bootDeadline = (Get-Date).AddSeconds($bootTimeoutSec)
+$bootArmed = $false
+$bootDead = $false
+Write-Output ("BOOT_WAIT timeoutSec={0} log={1}" -f $bootTimeoutSec, $logPath)
+while ((Get-Date) -lt $bootDeadline) {
+  if (Test-Path -LiteralPath $logPath) {
+    try {
+      $tail = @(Get-Content -LiteralPath $logPath -Tail 120 -ErrorAction SilentlyContinue)
+      $sidSeen = $false
+      foreach ($line in $tail) {
+        $s = [string]$line
+        if ($s -match [regex]::Escape("sessionId=$sessionId")) { $sidSeen = $true }
+        # Require our session id in the recent window before trusting armed:
+        if ($sidSeen -and $s -match 'armed:\s*\d+\s+slices') {
+          $bootArmed = $true
+          break
+        }
+      }
+      if ($bootArmed) { break }
+    } catch {}
+  }
+  if ($runnerPid -gt 0 -and -not (Test-PidAliveLocal $runnerPid)) {
+    $bootDead = $true
+    break
+  }
+  Start-Sleep -Milliseconds 500
+}
+if ($bootArmed) {
+  Write-Output 'BOOT_OK=armed'
+  try {
+    $st = Get-Content -LiteralPath $sessionStatePath -Raw | ConvertFrom-Json
+    $st | Add-Member -NotePropertyName state -NotePropertyValue 'running' -Force
+    $st | Add-Member -NotePropertyName outcome -NotePropertyValue 'boot-ok' -Force
+    $st | Add-Member -NotePropertyName updatedAt -NotePropertyValue ((Get-Date).ToString('o')) -Force
+    $st | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $sessionStatePath -Encoding utf8
+  } catch {}
+} else {
+  $why = if ($bootDead) { 'runner-pid-dead' } else { 'armed-timeout' }
+  Write-Output ("BOOT_FAIL reason={0}" -f $why)
+  try {
+    [ordered]@{
+      sessionId   = $sessionId
+      ledgerHash  = $ledgerHash
+      ledgerTitle = $ledgerTitle
+      repoDir     = $RepoDir
+      workDir     = $workDir
+      runnerPid   = $runnerPid
+      mergeTarget = $MergeTarget
+      state       = 'blocked'
+      outcome     = "boot-fail-$why"
+      updatedAt   = (Get-Date).ToString('o')
+    } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $sessionStatePath -Encoding utf8
+  } catch {}
+  Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
+  Write-Output "BOOT_DISARMED flag removed — runner never reached armed: within ${bootTimeoutSec}s"
+  throw "Autopro boot failed ($why). See $logPath — session not left as healthy running."
 }
 
-$openBoard = Join-Path $SkillScripts 'showtime-open-board.ps1'
-if (Test-Path -LiteralPath $openBoard) {
-  Write-Output "Opening Show Time board in browser: $boardUrl"
-  $openArgs = @('-NoProfile', '-File', $openBoard, '-BoardUrl', $boardUrl, '-SessionId', $sessionId)
-  if ($NoBrowser) { $openArgs += '-NoBrowser' }
-  & pwsh @openArgs 2>&1 | ForEach-Object { Write-Output "open> $_" }
-} elseif (-not $NoBrowser) {
-  Write-Output "Opening Show Time board in browser (direct): $boardUrl"
+# Companion + board open — skipped in headless mode
+if (-not $NoShowTime) {
+  Write-Output 'Ensure Looplet companion (keep if healthy)…'
   try {
-    Start-Process $boardUrl
-    Write-Output "open> OPENED_PAGE=$boardUrl"
+    Ensure-LoopletCompanion 2>&1 | ForEach-Object { Write-Output "companion> $_" }
   } catch {
-    try {
-      $psi = New-Object System.Diagnostics.ProcessStartInfo
-      $psi.FileName = 'cmd.exe'
-      $psi.Arguments = "/c start `"`" `"$boardUrl`""
-      $psi.UseShellExecute = $false
-      $psi.CreateNoWindow = $true
-      [void][System.Diagnostics.Process]::Start($psi)
-      Write-Output "open> OPENED_PAGE_VIA=cmd start"
-    } catch {
-      Write-Output "open> FAILED=$($_.Exception.Message)"
+    Write-Output "companion> ensure warn: $($_.Exception.Message)"
+  }
+
+  $openBoard = Join-Path $SkillScripts 'showtime-open-board.ps1'
+  if (Test-Path -LiteralPath $openBoard) {
+    Write-Output "Opening Show Time board in browser: $boardUrl"
+    $openArgs = @('-NoProfile', '-File', $openBoard, '-BoardUrl', $boardUrl, '-SessionId', $sessionId)
+    if ($NoBrowser) { $openArgs += '-NoBrowser' }
+    & pwsh @openArgs 2>&1 | ForEach-Object { Write-Output "open> $_" }
+  } elseif (-not $NoBrowser) {
+    # Fallback if open-board script missing — still prefer an already-running Chrome/Edge
+    Write-Output "Opening Show Time board (fallback, prefer existing browser): $boardUrl"
+    $opened = $false
+    foreach ($pair in @(
+        @{ Exe = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"; Proc = 'chrome' },
+        @{ Exe = "${env:LOCALAPPDATA}\Google\Chrome\Application\chrome.exe"; Proc = 'chrome' },
+        @{ Exe = "${env:ProgramFiles}\Microsoft\Edge\Application\msedge.exe"; Proc = 'msedge' }
+      )) {
+      if (-not (Test-Path -LiteralPath $pair.Exe)) { continue }
+      $running = @(Get-Process -Name $pair.Proc -ErrorAction SilentlyContinue)
+      try {
+        if ($running.Count -gt 0) {
+          Start-Process -FilePath $pair.Exe -ArgumentList @('--new-tab', $boardUrl) -ErrorAction Stop
+          Write-Output "open> OPENED_IN_EXISTING=$($pair.Proc)"
+        } else {
+          Start-Process -FilePath $pair.Exe -ArgumentList @($boardUrl) -ErrorAction Stop
+          Write-Output "open> OPENED_FRESH=$($pair.Proc)"
+        }
+        $opened = $true
+        break
+      } catch {}
+    }
+    if (-not $opened) {
+      try {
+        Start-Process $boardUrl
+        Write-Output "open> OPENED_PAGE=$boardUrl"
+      } catch {
+        Write-Output "open> FAILED=$($_.Exception.Message)"
+      }
     }
   }
 }
@@ -461,6 +735,10 @@ Write-Output (Tv-Screen (Tv-Pad '' 34))
 Write-Output (Tv-Screen (Tv-Pad $boardUrl 34))
 Write-Output (Tv-Screen (Tv-Pad '' 34))
 Write-Output (Tv-Screen (Tv-Pad 'autonomous ledger  ● LIVE' 34))
+$engTv = ("engine {0}" -f $resolvedEngine.Engine)
+if ($Model) { $engTv = ("{0} · {1}" -f $engTv, $Model) }
+if ($engTv.Length -gt 34) { $engTv = $engTv.Substring(0, 34) }
+Write-Output (Tv-Screen (Tv-Pad $engTv 34))
 Write-Output (Tv-Screen (Tv-Pad '' 34))
 Write-Output (Tv-Outer ('  └' + ('─' * 34) + '┘  '))
 Write-Output (Tv-Outer (Tv-Pad '(  ) VOL          CHANNEL (  )' 40))
@@ -473,6 +751,8 @@ Write-Output '  Manual log:'
 Write-Output "    Get-Content `"$scratch\autopro.log`" -Wait"
 Write-Output ''
 Write-Output "SHOWTIME_SESSION=$sessionId"
+Write-Output ("ENGINE={0}" -f $resolvedEngine.Engine)
+Write-Output ("ENGINE_DISPLAY={0}" -f $resolvedEngine.Display)
 Write-Output "RUNNER_PID=$runnerPid"
 Write-Output "LAUNCHER_PID=$($proc.Id)"
 Write-Output "WORK_DIR=$workDir"
@@ -480,6 +760,12 @@ Write-Output "SHOWTIME_URL=$boardUrl"
 Write-Output "MERGE_TARGET=$MergeTarget"
 Write-Output "LEDGER_HASH=$ledgerHash"
 Write-Output "LEDGER_TITLE=$ledgerTitle"
+Write-Output "SKIP_PERMISSIONS=1"
+Write-Output ("SLICE_VERIFIER={0}" -f $(if ($NoSliceVerifier) { 'off' } else { 'on' }))
+Write-Output ("VERIFIER_MODEL={0}" -f $(if ($VerifierModel) { $VerifierModel } else { 'worker/default' }))
+Write-Output "VERIFIER_REPAIR_ATTEMPTS=$VerifierRepairAttempts"
+Write-Output ("ALLOW_MODEL_ONLY_FINAL_CHECK={0}" -f $(if ($AllowModelOnlyFinalCheck) { '1' } else { '0' }))
+Write-Output "RISK_ACK=AllowDangerousSkipPermissions+IAcceptUnattendedRisk"
 Write-Output "STATUS_LOG=$RepoDir\.claude\scratch\SHOWTIME-STATUS.md"
 Write-Output 'CHAT_HINT=Chat only: TV card (board URL once on screen) + manual log (theater/showtime-tv-card.md).'
 Write-Output ("Stop: run {0} -Root `"{1}`" or remove .claude\scratch\autopro-on." -f $StopAutoPro, $Root)

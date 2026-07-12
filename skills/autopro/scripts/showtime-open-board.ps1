@@ -3,7 +3,7 @@
 
   Always:
     - Write handoff file (showtime-open.json) for the extension
-    - Open $BoardUrl in a real browser tab (Start-Process → cmd start → Chrome/Edge)
+    - Open $BoardUrl in Google Chrome; use the default browser only when Chrome is absent
 
   Additive (never suppress the browser tab):
     - Companion POST open hook on :4321 / :4322 if present
@@ -47,13 +47,53 @@ function Get-ConfigExt {
 }
 
 function Find-InstalledLoopletId {
+  $hits = @()
+
+  # 1) Unpacked (load unpacked) IDs live in Secure Preferences, NOT under Extensions/
+  $userData = Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'
+  if (Test-Path -LiteralPath $userData) {
+    Get-ChildItem -LiteralPath $userData -Directory -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -eq 'Default' -or $_.Name -like 'Profile *' } |
+      ForEach-Object {
+        foreach ($prefName in @('Secure Preferences', 'Preferences')) {
+          $pref = Join-Path $_.FullName $prefName
+          if (-not (Test-Path -LiteralPath $pref)) { continue }
+          try {
+            $j = Get-Content -LiteralPath $pref -Raw -ErrorAction Stop | ConvertFrom-Json
+            $settings = $j.extensions.settings
+            if (-not $settings) { continue }
+            foreach ($prop in $settings.PSObject.Properties) {
+              $id = [string]$prop.Name
+              if ($id -notmatch '^[a-p]{32}$') { continue }
+              $s = $prop.Value
+              $path = [string]($s.path)
+              $name = ''
+              try { $name = [string]$s.manifest.name } catch {}
+              $blob = "$path $name"
+              if ($blob -match '(?i)ai-sidebar|looplet|ai.?sidebar') {
+                $hits += [pscustomobject]@{
+                  Id      = $id
+                  Name    = $(if ($name) { $name } else { 'Looplet (unpacked)' })
+                  Path    = $path
+                  Profile = $_.Name
+                  Rank    = $(if ($path -match '(?i)\\ai-sidebar\\extension') { 0 } elseif ($path -match '(?i)ai-sidebar') { 1 } else { 2 })
+                }
+              }
+            }
+          } catch {}
+        }
+      }
+  }
+
+  # 2) Packed installs under Extensions/ (store / CRX)
   $roots = @(
     (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data\Default\Extensions'),
     (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data\Profile 1\Extensions'),
+    (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data\Profile 2\Extensions'),
+    (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data\Profile 5\Extensions'),
     (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data\Default\Extensions'),
     (Join-Path $env:LOCALAPPDATA 'BraveSoftware\Brave-Browser\User Data\Default\Extensions')
   )
-  $hits = @()
   foreach ($root in $roots) {
     if (-not (Test-Path -LiteralPath $root)) { continue }
     Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue | ForEach-Object {
@@ -68,18 +108,21 @@ function Find-InstalledLoopletId {
         $blob = "$name $($j.description) $($j.short_name)"
         if ($blob -match '(?i)looplet|ai sidebar|show\s*time') {
           $hits += [pscustomobject]@{
-            Id   = $id
-            Name = $name
-            Path = $manif.FullName
+            Id      = $id
+            Name    = $name
+            Path    = $manif.FullName
+            Profile = ''
+            Rank    = 3
           }
         }
       } catch {}
     }
   }
-  # Prefer exact Looplet name
-  $exact = $hits | Where-Object { $_.Name -match '(?i)^looplet$' } | Select-Object -First 1
-  if ($exact) { return $exact }
-  return $hits | Select-Object -First 1
+
+  if (-not $hits.Count) { return $null }
+  # Prefer unpacked ai-sidebar/extension, then any Looplet name
+  $best = $hits | Sort-Object Rank, @{ Expression = { if ($_.Name -match '(?i)^looplet$') { 0 } else { 1 } } } | Select-Object -First 1
+  return $best
 }
 
 function Test-CompanionOpen([string]$boardUrl) {
@@ -109,47 +152,85 @@ function Test-CompanionOpen([string]$boardUrl) {
 }
 
 function Open-ExtensionBoard([string]$extId, [string]$boardUrl) {
-  # Prefer side panel / board routes; extension team can add board.html later
-  $candidates = @(
-    "chrome-extension://$extId/sidebar/sidebar.html?view=board&showtime=$([uri]::EscapeDataString($boardUrl))",
-    "chrome-extension://$extId/sidebar/sidebar.html#board?showtime=$([uri]::EscapeDataString($boardUrl))",
-    "chrome-extension://$extId/newtab/newtab.html?board=$([uri]::EscapeDataString($boardUrl))",
-    "chrome-extension://$extId/options/options.html?showtime=$([uri]::EscapeDataString($boardUrl))"
-  )
-  foreach ($u in $candidates) {
-    try {
-      Start-Process $u -ErrorAction Stop
-      Write-Output "OPENED_EXTENSION=$u"
-      return $true
-    } catch {
-      # try chrome.exe with the URL
-      foreach ($chrome in @(
-          "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
-          "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
-          "${env:LOCALAPPDATA}\Google\Chrome\Application\chrome.exe",
-          "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
-          "${env:ProgramFiles}\Microsoft\Edge\Application\msedge.exe"
-        )) {
-        if (Test-Path $chrome) {
-          try {
-            Start-Process -FilePath $chrome -ArgumentList @($u) -ErrorAction Stop
-            Write-Output "OPENED_EXTENSION_VIA=$chrome"
-            Write-Output "OPENED_EXTENSION=$u"
-            return $true
-          } catch {}
-        }
-      }
-    }
+  # NEVER Start-Process chrome-extension:// alone — Windows shows
+  # "Get an app to open this chrome-extension link" (Microsoft Store).
+  # Only open via chrome.exe with the profile that has Looplet loaded.
+  $chrome = Get-ChromePath
+  if (-not $chrome) {
+    Write-Output 'EXTENSION_OPEN_SKIP=no chrome.exe (board page is enough)'
+    return $false
   }
-  return $false
+  $profile = 'Profile 5'
+  $cfg = Get-ConfigExt
+  if ($cfg -and $cfg.profile) { $profile = [string]$cfg.profile }
+  $u = "chrome-extension://$extId/sidebar/sidebar.html?view=board&showtime=$([uri]::EscapeDataString($boardUrl))"
+  try {
+    Start-Process -FilePath $chrome -ArgumentList @("--profile-directory=$profile", $u) -ErrorAction Stop
+    Write-Output "OPENED_EXTENSION_VIA=$chrome profile=$profile"
+    Write-Output "OPENED_EXTENSION=$u"
+    return $true
+  } catch {
+    Write-Output "EXTENSION_OPEN_WARN=$($_.Exception.Message)"
+    return $false
+  }
+}
+
+function Get-ChromePath {
+  foreach ($c in @(
+      "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
+      "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+      "${env:LOCALAPPDATA}\Google\Chrome\Application\chrome.exe"
+    )) {
+    if (Test-Path -LiteralPath $c) { return $c }
+  }
+  try {
+    $rk = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe' -ErrorAction Stop
+    $p = $rk.'(default)'
+    if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+  } catch {}
+  return $null
+}
+
+function Normalize-BoardUrl([string]$url) {
+  # Tailscale + MagicDNS: localhost often resolves to ::1, but theater binds
+  # 127.0.0.1 only → health hangs and the board looks "offline". Always force IPv4.
+  if (-not $url) { return 'http://127.0.0.1:8770/' }
+  try {
+    $u = [uri]$url
+    if ($u.Host -eq 'localhost' -or $u.Host -eq '::1') {
+      $port = if ($u.IsDefaultPort) { 8770 } else { $u.Port }
+      return "http://127.0.0.1:$port$($u.PathAndQuery)"
+    }
+  } catch {}
+  return $url
 }
 
 function Open-BoardInBrowser([string]$url) {
-  # Hard guarantee: open the localhost board in the default browser.
-  # Companion / extension hooks are additive and must NOT suppress this.
+  # Hard guarantee: open 127.0.0.1 board — GOOGLE CHROME Profile 5 first (Looplet
+  # lives there). Use the system default browser only when Chrome is absent.
   # Note: do not mix Write-Output with return $bool under assignment — that
   # swallows status lines. Use $script:BoardPageOpened instead.
+  $url = Normalize-BoardUrl $url
   $script:BoardPageOpened = $false
+  $chrome = Get-ChromePath
+  $profile = 'Profile 5'
+  $cfg = Get-ConfigExt
+  if ($cfg -and $cfg.profile) { $profile = [string]$cfg.profile }
+  if ($chrome) {
+    try {
+      Start-Process -FilePath $chrome -ArgumentList @("--profile-directory=$profile", $url) -ErrorAction Stop
+      $script:BoardPageOpened = $true
+      Write-Output "OPENED_PAGE_VIA=$chrome profile=$profile"
+      Write-Output "OPENED_PAGE=$url"
+      return
+    } catch {
+      Write-Output "OPEN_CHROME_WARN=$($_.Exception.Message)"
+    }
+    # Chrome is installed but could not launch. Never fall through to another browser.
+    return
+  } else {
+    Write-Output 'OPEN_CHROME_WARN=chrome.exe not found — falling back to default browser'
+  }
   try {
     Start-Process $url -ErrorAction Stop
     $script:BoardPageOpened = $true
@@ -173,27 +254,11 @@ function Open-BoardInBrowser([string]$url) {
   } catch {
     Write-Output "OPEN_PAGE_CMD_WARN=$($_.Exception.Message)"
   }
-  # Prefer Chrome/Edge directly if shell association still failed
-  foreach ($browser in @(
-      "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
-      "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
-      "${env:LOCALAPPDATA}\Google\Chrome\Application\chrome.exe",
-      "${env:ProgramFiles}\Microsoft\Edge\Application\msedge.exe",
-      "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
-    )) {
-    if (-not (Test-Path -LiteralPath $browser)) { continue }
-    try {
-      Start-Process -FilePath $browser -ArgumentList @($url) -ErrorAction Stop
-      $script:BoardPageOpened = $true
-      Write-Output "OPENED_PAGE_VIA=$browser"
-      Write-Output "OPENED_PAGE=$url"
-      return
-    } catch {}
-  }
   Write-Output "OPEN_PAGE_FAILED=could not open $url"
 }
 
 # --- main ---
+$BoardUrl = Normalize-BoardUrl $BoardUrl
 if ($NoBrowser) {
   Write-Handoff 'none' $BoardUrl
   Write-Output 'OPEN_MODE=none'
