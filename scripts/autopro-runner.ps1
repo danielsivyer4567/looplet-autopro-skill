@@ -611,6 +611,11 @@ function Invoke-WorkerProcess {
   $psi.CreateNoWindow = $true
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
+  # Codex (and some node CLIs) treat a redirected/inherited stdin as "more
+  # prompt input" and block forever with "Reading additional input from stdin…"
+  # even when -p / argv already carries the full prompt. Always open + close
+  # stdin so the child sees EOF immediately.
+  $psi.RedirectStandardInput = $true
   foreach ($a in @($res.PrefixArgs)) {
     if ($null -ne $a -and [string]$a -ne '') { [void]$psi.ArgumentList.Add([string]$a) }
   }
@@ -624,6 +629,10 @@ function Invoke-WorkerProcess {
   $sw = [System.Diagnostics.Stopwatch]::StartNew()
   try {
     if (-not $proc.Start()) { throw ("{0} process failed to start" -f $res.Engine) }
+    try {
+      # EOF stdin immediately — critical for codex exec non-interactive
+      $proc.StandardInput.Close()
+    } catch {}
     try {
       [string]$proc.Id | Set-Content -LiteralPath $workerPidFile -Encoding ascii -Force
     } catch {}
