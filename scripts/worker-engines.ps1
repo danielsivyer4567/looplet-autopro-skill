@@ -298,7 +298,10 @@ function Build-WorkerArgumentList {
       return @($args)
     }
     'codex' {
-      # codex exec — non-interactive agent
+      # codex exec — non-interactive agent.
+      # Prompt on argv. Stdin is redirected+closed by the runner (empty EOF) so
+      # codex does not block on "Reading additional input from stdin…".
+      # Do NOT use `-` (stdin prompt): that path hung in smoke tests on Windows.
       $args = [System.Collections.Generic.List[string]]::new()
       [void]$args.Add('exec')
       [void]$args.Add('--json')
