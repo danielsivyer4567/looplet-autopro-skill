@@ -4,11 +4,6 @@
 param(
   [string]$Root = (Get-Location).Path,
   [string]$RepoDir = (Get-Location).Path,
-  [string]$WorktreeDir = '',
-  [string]$BaseBranch = '',
-  [ValidateSet('base', 'main')]
-  [string]$MergeTarget = 'base',
-  [string]$MainBranch = '',
   [string]$Model = '',
   # Worker engine: auto | claude | codex | gemini | grok | ollama
   [string]$Engine = 'auto',
@@ -19,8 +14,6 @@ param(
   [string]$LedgerTitle = '',
   [string]$SessionId = '',
   [switch]$NoShowTime,
-  [switch]$NoWorktree,
-  [switch]$PushOnFinish,
   # Only set by launch-showtime after risk ack — never default-on for raw runner invokes
   [switch]$SkipPermissions,
   # Escape hatch: skip independent gate (npm run gate / final-check.ps1 / env cmd)
@@ -45,8 +38,6 @@ $log = Join-Path $scratch 'autopro.log'
 $sessionStatePath = Join-Path $scratch 'autopro-session.json'
 $handoverPath = Join-Path $scratch 'SHOWTIME-HANDOVER.md'
 $RegisterPs1 = Join-Path $PSScriptRoot 'theater-register.ps1'
-$WorktreePs1 = Join-Path $PSScriptRoot 'showtime-worktree.ps1'
-$CommitPs1 = Join-Path $PSScriptRoot 'showtime-scoped-commit.ps1'
 $StatusPs1 = Join-Path $PSScriptRoot 'showtime-status.ps1'
 $SliceVerifierPs1 = Join-Path $PSScriptRoot 'showtime-slice-verifier.ps1'
 $StateRoot = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater'
@@ -58,11 +49,9 @@ $workerPidFile = Join-Path $scratch 'autopro-worker.pid'
 . (Join-Path $PSScriptRoot 'worker-engines.ps1')
 if (Test-Path -LiteralPath $SliceVerifierPs1) { . $SliceVerifierPs1 }
 
-# Code workdir = isolated worktree when available
-$WorkDir = if ($WorktreeDir -and (Test-Path -LiteralPath $WorktreeDir)) { $WorktreeDir } else { $RepoDir }
-$ledger = if (Test-Path (Join-Path $WorkDir '.claude\scratch\ledger.md')) {
-  Join-Path $WorkDir '.claude\scratch\ledger.md'
-} else { $ledgerPrimary }
+# The work happens in the repo itself — there is no isolated tree to prefer.
+$WorkDir = $RepoDir
+$ledger = $ledgerPrimary
 
 # Resolve worker engine early (fail before burning slices if nothing installed)
 try {
@@ -379,27 +368,11 @@ function Get-SteersText {
   return [string](($parts -join "`n") + "`n`n")
 }
 
-function Invoke-ScopedCommit([string]$msg) {
-  if ($NoWorktree) { return [pscustomobject]@{ Ok = $true; Status = 'skipped-no-worktree'; Commit = '' } }
-  if (-not $WorkDir -or $WorkDir -eq $RepoDir) { return [pscustomobject]@{ Ok = $true; Status = 'skipped-primary'; Commit = '' } }
-  if (-not (Test-Path -LiteralPath $CommitPs1)) { return [pscustomobject]@{ Ok = $false; Status = 'missing-commit-script'; Commit = '' } }
-  try {
-    $out = & pwsh -NoProfile -File $CommitPs1 -WorktreeDir $WorkDir -SessionId $SessionId -Message $msg 2>&1
-    $exit = $LASTEXITCODE
-    $out | ForEach-Object { Log ("  commit> {0}" -f $_) }
-    $status = ''
-    $commit = ''
-    foreach ($line in $out) {
-      if ("$line" -match '^STATUS=(.+)$') { $status = $Matches[1].Trim() }
-      if ("$line" -match '^COMMIT=(.+)$') { $commit = $Matches[1].Trim() }
-    }
-    return [pscustomobject]@{ Ok = ($exit -eq 0); Status = $status; Commit = $commit; ExitCode = $exit }
-  } catch {
-    Log ("  commit> warn: {0}" -f $_.Exception.Message)
-    return [pscustomobject]@{ Ok = $false; Status = 'exception'; Commit = ''; Error = $_.Exception.Message; ExitCode = 1 }
-  }
-}
-
+# Show Time runs ZERO git. The worker session owns its own commits via the `work`
+# skill, in the repo, on the operator's branch. There is no Invoke-ScopedCommit
+# and no Invoke-FinishMergeAndPrune: that authority is what stranded work in
+# orphaned worktrees, so it is DELETED, not stubbed. A no-op stub would just be a
+# socket to plug it back into.
 function Invoke-StatusLog {
   param(
     [ValidateSet('refresh', 'event', 'init')]
@@ -416,71 +389,13 @@ function Invoke-StatusLog {
       '-RepoDir', $RepoDir,
       '-Action', $Action,
       '-SessionId', $SessionId,
-      '-LedgerPath', $ledger,
-      '-MergeTarget', $MergeTarget,
-      '-WorktreeDir', $WorkDir
+      '-LedgerPath', $ledger
     )
     if ($Event) { $statusArgs += @('-Event', $Event, '-Level', $Level) }
     if ($Commit) { $statusArgs += @('-Commit', $Commit) }
     & pwsh @statusArgs 2>&1 | ForEach-Object { Log ("  status> {0}" -f $_) }
   } catch {
     Log ("  status> warn: {0}" -f $_.Exception.Message)
-  }
-}
-
-function Invoke-FinishMergeAndPrune {
-  if ($NoWorktree) {
-    Log 'finish: skipped (NoWorktree) — no isolated merge/prune'
-    return [pscustomobject]@{ Ok = $true; Status = 'skipped-no-worktree'; MergeCommit = ''; WorktreeRemoved = $false }
-  }
-  if (-not (Test-Path -LiteralPath $WorktreePs1)) {
-    Log 'finish: showtime-worktree.ps1 missing'
-    return [pscustomobject]@{ Ok = $false; Status = 'missing-worktree-script'; MergeCommit = ''; WorktreeRemoved = $false }
-  }
-  # Final scoped commit of any remaining dirty files in worktree
-  $finalCommit = Invoke-ScopedCommit "showtime ${SessionId}: final scoped commit before merge"
-  if (-not $finalCommit.Ok) {
-    return [pscustomobject]@{ Ok = $false; Status = "final-commit-$($finalCommit.Status)"; MergeCommit = ''; WorktreeRemoved = $false; FinalCommit = $finalCommit }
-  }
-  $finishArgs = @(
-    '-NoProfile', '-File', $WorktreePs1,
-    '-Action', 'finish',
-    '-RepoDir', $RepoDir,
-    '-SessionId', $SessionId,
-    '-MergeTarget', $MergeTarget
-  )
-  if ($BaseBranch) { $finishArgs += @('-BaseBranch', $BaseBranch) }
-  if ($MainBranch) { $finishArgs += @('-MainBranch', $MainBranch) }
-  if ($PushOnFinish) { $finishArgs += '-Push' }
-  Log ("finish: merge session branch (target={0}) + prune worktree/branch" -f $MergeTarget)
-  $finishOut = & pwsh @finishArgs 2>&1
-  $finishExit = $LASTEXITCODE
-  $finishOut | ForEach-Object { Log ("  finish> {0}" -f $_) }
-  $mergeCommit = ''
-  $status = ''
-  $worktreeRemoved = $false
-  foreach ($line in $finishOut) {
-    if ("$line" -match '^(MERGE_COMMIT|COMMIT|SHA)=(.+)$') { $mergeCommit = $Matches[2].Trim() }
-    if ("$line" -match '^STATUS=(.+)$') { $status = $Matches[1].Trim() }
-    if ("$line" -match '^WORKTREE_REMOVED=(.+)$') { $worktreeRemoved = $true }
-  }
-  $ok = ($finishExit -eq 0 -and $status -eq 'merged-and-pruned' -and ($NoWorktree -or $worktreeRemoved))
-  Invoke-StatusLog -Action event -Level finish -Event ("Session finish · merge target={0} · status={1} · ok={2}" -f $MergeTarget, $status, $ok) -Commit $mergeCommit
-  # Also prune any other READY showtime worktrees
-  try {
-    & pwsh -NoProfile -File $WorktreePs1 -Action prune -RepoDir $RepoDir -StaleDays 7 2>&1 |
-      ForEach-Object { Log ("  prune> {0}" -f $_) }
-  } catch {
-    Log ("  prune> warn: {0}" -f $_.Exception.Message)
-  }
-  return [pscustomobject]@{
-    Ok              = $ok
-    Status          = $status
-    ExitCode        = $finishExit
-    MergeCommit     = $mergeCommit
-    WorktreeRemoved = $worktreeRemoved
-    FinalCommit     = $finalCommit
-    Output          = @($finishOut)
   }
 }
 
@@ -592,6 +507,21 @@ function Get-TrackedWorktreeStatus {
     Push-Location -LiteralPath $WorkDir
     return (@(& git status --porcelain --untracked-files=no 2>$null) -join "`n")
   } catch { return '' }
+  finally { Pop-Location }
+}
+
+# Read-only. The handover names the branch the worker committed to, since Show
+# Time no longer moves that work anywhere.
+function Get-CurrentBranch {
+  try {
+    Push-Location -LiteralPath $RepoDir
+    $b = (& git rev-parse --abbrev-ref HEAD 2>$null | Out-String).Trim()
+    if (-not $b -or $b -eq 'HEAD') {
+      $s = (& git rev-parse --short HEAD 2>$null | Out-String).Trim()
+      return $(if ($s) { "detached@$s" } else { 'unknown' })
+    }
+    return $b
+  } catch { return 'unknown' }
   finally { Pop-Location }
 }
 
@@ -852,8 +782,6 @@ function Write-SessionState([string]$State, [string]$Outcome = '', [string]$Hand
       ledgerHash   = $LedgerHash
       ledgerTitle  = $LedgerTitle
       repoDir      = $RepoDir
-      workDir      = $WorkDir
-      mergeTarget  = $MergeTarget
       runnerPid    = $PID
       handoverPath = $Handover
       updatedAt    = (Get-Date).ToString('o')
@@ -870,16 +798,12 @@ function Write-Handover {
   param(
     [Parameter(Mandatory = $true)][string]$Outcome,
     [object]$FinalCheck = $null,
-    [object]$Merge = $null,
     [string]$Notes = ''
   )
   $counts = Get-Counts
   $stats = Build-StatsPayload
   $finalExit = if ($FinalCheck) { [int]$FinalCheck.ExitCode } else { -1 }
   $finalGreen = if ($FinalCheck) { Test-FinalCheckGreen $FinalCheck } else { $false }
-  $mergeOk = if ($Merge) { [bool]$Merge.Ok } else { $false }
-  $mergeStatus = if ($Merge) { [string]$Merge.Status } else { '' }
-  $mergeCommit = if ($Merge) { [string]$Merge.MergeCommit } else { '' }
   $recent = Get-RecentLogLines 80
   $finalTail = @()
   if ($FinalCheck -and $FinalCheck.Text) {
@@ -896,13 +820,10 @@ function Write-Handover {
   [void]$sb.AppendLine("| Ledger | $LedgerTitle |")
   [void]$sb.AppendLine("| Ledger hash | ``$LedgerHash`` |")
   [void]$sb.AppendLine("| Repo | ``$RepoDir`` |")
-  [void]$sb.AppendLine("| Worktree | ``$WorkDir`` |")
-  [void]$sb.AppendLine("| Merge target | ``$MergeTarget`` |")
+  [void]$sb.AppendLine("| Branch | ``$(Get-CurrentBranch)`` |")
   [void]$sb.AppendLine("| Final check exit | ``$finalExit`` |")
   [void]$sb.AppendLine("| Final check green | ``$finalGreen`` |")
-  [void]$sb.AppendLine("| Merge ok | ``$mergeOk`` |")
-  [void]$sb.AppendLine("| Merge status | ``$mergeStatus`` |")
-  [void]$sb.AppendLine("| Merge commit | ``$mergeCommit`` |")
+  [void]$sb.AppendLine("| Git | ``Show Time runs zero git — the worker committed to the branch above`` |")
   [void]$sb.AppendLine("| Generated | ``$((Get-Date).ToString('o'))`` |")
   if ($counts) {
     [void]$sb.AppendLine("| Counts | done=$($counts.Done), pending=$($counts.Pending), in-progress=$($counts.InProgress), blocked=$($counts.Blocked) |")
@@ -1063,8 +984,7 @@ function Invoke-Slice {
     }) | Out-Null
 
   Log ("  stats> in={0} out={1} cacheR={2} cacheW={3} cost=`${4} sec={5:n1} files+={6} lines+={7} measured={8}" -f $usage.input, $usage.output, $usage.cacheRead, $usage.cacheCreate, $usage.costUsd, $sec, $delta.filesCreated, $delta.linesAdded, $usage.measured)
-  # Scoped commit inside worktree only (never primary dirty tree)
-  $sliceCommit = Invoke-ScopedCommit "showtime ${SessionId}: slice commit"
+  # The worker committed its own slice (the `work` skill does it). Nothing to do here.
   $cAfter = Get-Counts
   $sliceNote = "Slice wall {0:n0}s · +{1} lines · tokens {2}" -f $sec, $delta.linesAdded, ($usage.input + $usage.output)
   if ($cAfter) {
@@ -1079,7 +999,6 @@ function Invoke-Slice {
     Usage    = $usage
     Delta    = $delta
     Seconds  = $sec
-    Commit   = $sliceCommit
   }
 }
 
@@ -1165,8 +1084,8 @@ if ($null -eq $c) { Log 'ABORT: no ledger.md'; exit 1 }
 if (-not $c.Approved) { Log 'ABORT: ledger not Approved: yes'; exit 1 }
 if (-not (Test-Path -LiteralPath $flag)) { Log 'ABORT: autopro-on flag missing'; exit 1 }
 
-Invoke-ShowTime -Action register -Status running -Sentinel ("Runner armed · engine={0} · worktree isolation={1}" -f $script:EngineId, (-not $NoWorktree -and $WorkDir -ne $RepoDir))
-Invoke-StatusLog -Action event -Level info -Event ("Runner armed · engine={0} · isolation={1} · merge={2}" -f $script:EngineId, (-not $NoWorktree -and $WorkDir -ne $RepoDir), $MergeTarget)
+Invoke-ShowTime -Action register -Status running -Sentinel ("Runner armed · engine={0} · branch={1} · no git authority" -f $script:EngineId, (Get-CurrentBranch))
+Invoke-StatusLog -Action event -Level info -Event ("Runner armed · engine={0} · branch={1} · Show Time runs zero git" -f $script:EngineId, (Get-CurrentBranch))
 # Board URL is logged once at launch (SHOWTIME_URL / status server event). Do not re-emit a hardcoded 8770 here.
 Invoke-StatusLog -Action event -Level server -Event ("Autopro log: {0}" -f $log)
 
@@ -1230,7 +1149,7 @@ If green, also say Epic complete, check green, and list the commits.
 If red, list each failure.
 Do NOT ship. Do NOT loop. This is the autopro completion step.
 Note: autopro will ALSO run an independent local gate (npm run gate / final-check script /
-AUTOPRO_FINAL_CHECK_CMD). Your marker alone does not authorize merge.
+AUTOPRO_FINAL_CHECK_CMD). Your marker alone does not authorize completion.
 '@
     $finalCheck = Invoke-Slice $finalPrompt
     $finalGreen = Test-FinalCheckGreen $finalCheck
@@ -1266,20 +1185,12 @@ AUTOPRO_FINAL_CHECK_CMD). Your marker alone does not authorize merge.
       break
     }
 
-    Write-SessionState -State 'finalizing' -Outcome 'merge-prune'
-    $merge = Invoke-FinishMergeAndPrune
-    if (-not $merge.Ok) {
-      Log ("FINALIZER_STOP: merge/prune failed status={0} exit={1}" -f $merge.Status, $merge.ExitCode)
-      $hp = Write-Handover -Outcome 'merge-prune-failed' -FinalCheck $finalCheck -Merge $merge -Notes 'Worktree was preserved for manual resolution.'
-      Publish-Handover -Path $hp -Outcome 'merge-prune-failed'
-      Write-SessionState -State 'blocked' -Outcome 'merge-prune-failed' -Handover $hp
-      Invoke-StatusLog -Action event -Level block -Event ("Merge/prune failed ({0}); handover={1}" -f $merge.Status, $hp)
-      Invoke-ShowTime -Action heartbeat -Status blocked -StopReason ("Merge/prune failed: {0}" -f $merge.Status) -Sentinel ("Merge/prune failed · handover {0}" -f $hp)
-      Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
-      break
-    }
+    # No finish step: nothing was isolated, so nothing needs bringing home. The
+    # worker's commits are already on the operator's branch.
+    Write-SessionState -State 'finalizing' -Outcome 'reporting'
+    Invoke-StatusLog -Action event -Level finish -Event 'Ledger complete · final check green · no merge (Show Time runs zero git)'
 
-    $hp = Write-Handover -Outcome 'complete' -FinalCheck $finalCheck -Merge $merge -Notes 'Final check green, merge verified, worktree pruned.'
+    $hp = Write-Handover -Outcome 'complete' -FinalCheck $finalCheck -Notes 'Final check green. No merge: Show Time runs zero git — the work is already committed on the repo branch.'
     $handoverText = ''
     try { $handoverText = Get-Content -LiteralPath $hp -Raw -ErrorAction Stop } catch {}
     # proof artifact
@@ -1289,19 +1200,18 @@ AUTOPRO_FINAL_CHECK_CMD). Your marker alone does not authorize merge.
       $proof = @{
         sessionId = $SessionId
         stats     = (Build-StatsPayload)
-        workDir   = $WorkDir
+        repoDir   = $RepoDir
         ledgerHash = $LedgerHash
         ledgerTitle = $LedgerTitle
         handoverPath = $hp
-        merge = $merge
         at        = (Get-Date).ToString('o')
       }
       $proof | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $proofDir "token-saver-$SessionId.json") -Encoding utf8
     } catch {}
     Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
     Write-SessionState -State 'complete' -Outcome 'complete' -Handover $hp
-    Invoke-ShowTime -Action complete -Sentinel ("Complete · handover {0} · merge {1}" -f $hp, $merge.MergeCommit) -HandoverText $handoverText
-    Log 'DISARMED: autopro-on removed. Loop finished (handover + merge + prune verified).'
+    Invoke-ShowTime -Action complete -Sentinel ("Complete · handover {0}" -f $hp) -HandoverText $handoverText
+    Log 'DISARMED: autopro-on removed. Loop finished (final check green + handover written; no merge — Show Time runs zero git).'
     break
   }
 
@@ -1316,7 +1226,13 @@ AUTOPRO_FINAL_CHECK_CMD). Your marker alone does not authorize merge.
     # Explicit work-skill brief — bare "work" often yields empty/idle sessions
     # (in=1 out=1). Instruct the next pending ledger slice end-to-end.
     $workPrompt = @"
-You are an AutoPro unattended worker (engine=$($script:EngineId)). Execute the work skill now on this repo worktree.
+You are an AutoPro unattended worker (engine=$($script:EngineId)). Execute the work skill now in this repo.
+
+You are committing DIRECTLY to the operator's checked-out branch ($(Get-CurrentBranch)) in their
+working tree. There is no worktree, no scratch branch, and no safety net: nothing
+will merge your work anywhere afterwards, and nothing will clean it up. Your commit
+IS the deliverable. Commit only the files your slice touched — anything else you
+touch, you are touching in the operator's live tree.
 
 1. Read .claude/scratch/ledger.md (must be Approved: yes).
 2. Take the FIRST slice that is [pending] or [in-progress] (not [done]/[blocked]).
@@ -1324,7 +1240,7 @@ You are an AutoPro unattended worker (engine=$($script:EngineId)). Execute the w
 4. Commit only that slice's files with a conventional message.
 5. Do NOT start the next slice. Stop after one slice.
 6. Do not wait for a human. If blocked, mark the slice [blocked] with a short reason and exit.
-7. Stay inside the current working directory / worktree. No force-push. No deleting .git.
+7. Stay inside the current working directory. No force-push. No branch switching. No deleting .git.
 
 If no pending slices remain, report all done and stop.
 "@

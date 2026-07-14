@@ -33,13 +33,11 @@ Canonical scripts live in this skill:
 
 | Script | Role |
 |--------|------|
-| `scripts/launch-showtime.ps1` | Arm flag + worktree + Show Time + detach runner |
-| `scripts/autopro-runner.ps1` | Slice loop + scoped commits + finish merge/prune |
+| `scripts/launch-showtime.ps1` | Arm flag + Show Time + detach runner (**no git**) |
+| `scripts/autopro-runner.ps1` | Slice loop (**no git** — the worker commits its own slice) |
 | `scripts/worker-engines.ps1` | Multi-engine resolve + argv adapters (claude/codex/gemini/grok/ollama) |
 | `scripts/autopro-doctor.ps1` | Preflight engines/ledger/gate (no arm) |
-| `scripts/showtime-final-check.ps1` | Merge gate: decode worker result → green/red verdict |
-| `scripts/showtime-worktree.ps1` | create / finish (merge) / prune worktrees |
-| `scripts/showtime-scoped-commit.ps1` | Commit only paths inside one worktree |
+| `scripts/showtime-final-check.ps1` | Completion gate: decode worker result → green/red verdict |
 | `scripts/theater-server.mjs` | Localhost Show Time server (port 8770+) |
 | `scripts/theater-register.ps1` | ensure / register / heartbeat / complete |
 | `scripts/showtime-open-board.ps1` | **Always** open board URL in browser; companion/extension hooks additive |
@@ -59,7 +57,7 @@ Always launch with **`pwsh`**, not Windows PowerShell 5.1.
    - `Approved:` is not `yes` → "Approve the ledger first." Stop.
    - Prefer: if `autopro-on` already exists and a runner is healthy, say already
      armed (still open Show Time URL if useful).
-2. **Arm + Show Time + launch** (adjust paths to the epic worktree):
+2. **Arm + Show Time + launch** (run from the repo, on the branch you want the work on):
 
    ```powershell
    $skill = Join-Path $env:USERPROFILE '.claude\skills\autopro\scripts'
@@ -71,7 +69,7 @@ Always launch with **`pwsh`**, not Windows PowerShell 5.1.
 
    That script:
    - writes `autopro-on`
-   - creates an **isolated git worktree** + branch `showtime/<sessionId>`
+   - touches **no git** — no worktree, no branch, no commit (see the contract below)
    - starts **Show Time** server if needed (singleton)
    - **registers** this chat as a numbered lane
    - **ensures Looplet companion** on `:4321` (keep if healthy; start if down)
@@ -114,38 +112,45 @@ Always launch with **`pwsh`**, not Windows PowerShell 5.1.
    ```
 
 
-## Merge + automatic prune (after finish)
+## Show Time runs ZERO git — read this before adding any
 
-| Step | Behavior |
-|------|----------|
-| Arm | Worktree at `../.worktrees-showtime/<sessionId>` on `showtime/<sessionId>` |
-| Each slice | Scoped commit **only** in that worktree |
-| Ledger complete + check | Merge into chosen target, then prune worktree + branch |
-| Extra sweep | Prunes other READY showtime trees (already merged + clean) |
+Show Time is a **cinema, not a landlord**. It projects what a repo's build is
+doing and can send a nudge back. It never creates a branch, a worktree, or a
+commit.
 
-### Where mini-branches land (`-MergeTarget`)
+This is enforced, not just promised. `test-showtime.ps1` scans every `.ps1` and
+`.mjs` in `scripts/`, finds **every** git invocation, and fails unless each one
+uses a read-only verb (`rev-parse`, `status`, `log`, `diff`, …). It is an
+allowlist, not a denylist of bad verbs — a denylist missed the house idiom
+`& git -C $dir commit` (the exact form the deleted scripts used), so any verb
+nobody thought of fails too. The suite also asserts the sweep still catches that
+idiom, so the guard cannot silently rot.
 
-| Option | Meaning |
-|--------|---------|
-| **`base`** (default) | All chats merge back into the **one epic branch** you armed from |
-| **`main`** | Each finished ledger/session merges into **`main`** (or `-MainBranch`) |
+**Why it was taken away.** Show Time used to own a full git lifecycle: arm →
+scoped commit → merge → prune. Work lived in `.worktrees-showtime/sess_*` on a
+`showtime/sess_*` branch, and `finish` was the **only road home**. If finish
+never ran — session died, gate went red, merge conflicted, window closed — the
+tree was orphaned *with the work inside it*, and nothing surfaced it. Five
+orphans accumulated unnoticed; the effort in them got silently rebuilt on main.
+The failure was not a bug in `finish`, it was that a projector held write
+authority over a repo at all. So the authority is **deleted, not guarded**.
 
-```powershell
-# Fold into epic line
-& pwsh -File (Join-Path $skill 'launch-showtime.ps1') -Root $root -RepoDir $repo -MergeTarget base
+| Step | Behavior now |
+|------|--------------|
+| Arm | Runs **in the repo**, on the branch you already checked out. No worktree, no branch. |
+| Each slice | The worker's own `work` skill commits its slice. The runner does not stage or commit. |
+| Ledger complete | Final check runs, result is **reported**. Nothing is merged; the work is already on your branch. |
 
-# Each chat → main after check
-& pwsh -File (Join-Path $skill 'launch-showtime.ps1') -Root $root -RepoDir $repo -MergeTarget main
-```
+**Isolation is gone by design.** Sessions no longer get a private tree, so two
+runners on one repo will share a working tree and step on each other. That is the
+accepted trade: a stranded-work bug is silent and expensive, a collision is loud
+and immediate. **Single writer per repo** — if you want parallel epics, give each
+one its own branch and its own checkout *yourself*, deliberately, before arming.
 
-Manual prune leftovers:
-
-```powershell
-pwsh -File "$env:USERPROFILE\.claude\skills\autopro\scripts\showtime-worktree.ps1" `
-  -Action prune -RepoDir '<repo>' -StaleDays 7
-```
-
-Opt out of isolation (not recommended): `launch-showtime.ps1 -NoWorktree`.
+`-MergeTarget`, `-BaseBranch`, `-MainBranch`, `-PushOnFinish`, and `-NoWorktree`
+are **gone** from `launch-showtime.ps1` and `autopro-runner.ps1`. Nothing merges,
+so there is nothing to target — a flag that silently does nothing is worse than
+one that errors. Passing them now fails loudly, which is the honest outcome.
 
 ## `-autopro off` (hard stop)
 
@@ -188,7 +193,7 @@ Remove-Item -LiteralPath '<Root>\.claude\scratch\autopro-on' -Force -ErrorAction
 - Multi-engine auto-detect + pin (`-Engine`, `AUTOPRO_ENGINE`)
 - Instant chaining on process exit
 - Engine-specific unattended flags (Claude skip-permissions / Codex bypass / Gemini yolo / Grok always-approve)
-- Merges ONLY when the final check emits `FINAL_CHECK_STATUS=green` (red or unparseable → blocked + handover, worktree preserved, no merge)
+- Reports complete ONLY when the final check emits `FINAL_CHECK_STATUS=green` (red or unparseable → blocked + handover)
 - Stops on `[blocked]`, kill switch (`autopro-on.<sessionId>` deleted), or iteration cap
 - Audit trail: `.claude/scratch/autopro.log`
 - Show Time heartbeats with **engine + model** credit chips (unless `-NoShowTime`)
@@ -198,8 +203,8 @@ Remove-Item -LiteralPath '<Root>\.claude\scratch\autopro-on' -Force -ErrorAction
 
 - Show Time visualizes heartbeats/ledger parse — not full token streams
 - Alarms need the browser tab open (Web Audio)
-- Finish **merges locally into base** — it does not open a GitHub PR (`ship-epic` is separate if you want origin/main PR auto-merge)
-- Merge conflicts leave the worktree for you; re-run `finish` / `prune` after resolve
+- Show Time runs **zero git**: it does not branch, commit, merge, or open a PR. Your work lands wherever the worker committed it — the branch you armed from. Use `ship-epic` to open a PR.
+- No worktree isolation: two runners on one repo share a working tree. Single writer per repo.
 - Decomposition quality still governs everything
 
 ## Tests

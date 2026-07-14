@@ -40,52 +40,78 @@ if (-not (G $correctedRed)) { Ok 'gate: red after green -> block (red wins)' } e
 if (G $noMarker) { Ok 'gate: marker absent, prose green -> merge' } else { Bad 'gate: prose fallback must survive JSON escaping' }
 if (-not (Test-FinalCheckGreen $null)) { Ok 'gate: null result -> block' } else { Bad 'gate: null must block' }
 
-# ---- worktree finalizer (pure; temp repo, no server) -------------------------
-$WorktreePs1 = Join-Path $PSScriptRoot 'showtime-worktree.ps1'
-$CommitPs1 = Join-Path $PSScriptRoot 'showtime-scoped-commit.ps1'
-$fxRoot = Join-Path $env:TEMP ('showtime-fx-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
-$fxRepo = Join-Path $fxRoot 'repo'
-try {
-  New-Item -ItemType Directory -Force -Path $fxRepo | Out-Null
-  & git init -q -b main $fxRepo 2>&1 | Out-Null
-  & git -C $fxRepo config user.email 'showtime@test.local' | Out-Null
-  & git -C $fxRepo config user.name 'Show Time Test' | Out-Null
-  & git -C $fxRepo config commit.gpgsign false | Out-Null
-  'seed' | Set-Content -LiteralPath (Join-Path $fxRepo 'seed.txt') -Encoding utf8
-  & git -C $fxRepo add -A 2>&1 | Out-Null
-  & git -C $fxRepo commit -q -m 'seed' 2>&1 | Out-Null
-  # Operator sits on `work`; the epic merges into `main`. finish must hand `work` back.
-  & git -C $fxRepo checkout -q -b work 2>&1 | Out-Null
+# ---- disarmed: Show Time must hold ZERO git authority ------------------------
+# The worktree finalizer is deleted, not disabled. It owned arm -> commit ->
+# merge -> prune, and `finish` was the only road home: if it never ran, the work
+# was stranded in an orphaned tree. These tests fail if that authority returns.
+#
+# ALLOWLIST, not denylist. A denylist of write verbs (`git\s+commit`) misses the
+# house idiom `& git -C $dir commit` — the exact form the deleted scripts used —
+# because -C sits between `git` and the verb. So instead: find EVERY git
+# invocation, and require its verb to be one of the known read-only ones.
+# Anything else fails, including a verb nobody has thought of yet.
+$gitRead = @(
+  'rev-parse', 'status', 'log', 'ls-files', 'ls-tree', 'show', 'diff',
+  'config', 'rev-list', 'merge-base', 'describe', 'symbolic-ref', 'cat-file', 'for-each-ref'
+)
+# `git [-C <path>|-c k=v]* <verb>` — skip leading global flags to reach the verb.
+$gitCall = '(?<![\w-])git(?:\.exe)?\b(?<flags>(?:\s+-(?:C\s+\S+|c\s+\S+))*)\s+(?<verb>[a-z][a-z-]*)'
 
-  $fxSession = 'sess_fx' + [guid]::NewGuid().ToString('N').Substring(0, 6)
-  $createOut = & pwsh -NoProfile -File $WorktreePs1 -Action create -RepoDir $fxRepo -SessionId $fxSession -MergeTarget main -MainBranch main 2>&1
-  $wtPath = ''
-  foreach ($line in $createOut) { if ("$line" -match '^WORKTREE_PATH=(.+)$') { $wtPath = $Matches[1].Trim() } }
-  if ($wtPath -and (Test-Path -LiteralPath $wtPath)) { Ok 'finalizer: worktree created' } else { Bad "finalizer: worktree create ($createOut)" }
-
-  'slice work' | Set-Content -LiteralPath (Join-Path $wtPath 'slice.txt') -Encoding utf8
-  $commitOut = ((& pwsh -NoProfile -File $CommitPs1 -WorktreeDir $wtPath -SessionId $fxSession -Message 'fx slice' 2>&1) | Out-String)
-  if ($commitOut -match 'STATUS=committed') { Ok 'finalizer: scoped commit' } else { Bad "finalizer: scoped commit ($commitOut)" }
-
-  $tracked = (& git -C $wtPath ls-files '.showtime-worktree.json') | Out-String
-  if (-not $tracked.Trim()) { Ok 'finalizer: marker not committed' } else { Bad 'finalizer: .showtime-worktree.json leaked into the commit' }
-
-  $finishOut = ((& pwsh -NoProfile -File $WorktreePs1 -Action finish -RepoDir $fxRepo -SessionId $fxSession -MergeTarget main -MainBranch main 2>&1) | Out-String)
-  if ($finishOut -match 'MERGE_COMMIT=\S+') { Ok 'finalizer: emits MERGE_COMMIT' } else { Bad "finalizer: no MERGE_COMMIT ($finishOut)" }
-  if ($finishOut -match 'STATUS=merged-and-pruned') { Ok 'finalizer: merged and pruned' } else { Bad "finalizer: status ($finishOut)" }
-
-  $after = ((& git -C $fxRepo rev-parse --abbrev-ref HEAD) | Out-String).Trim()
-  if ($after -eq 'work') { Ok 'finalizer: primary branch restored to work' } else { Bad "finalizer: primary left on '$after', expected 'work'" }
-
-  $mainFiles = @(& git -C $fxRepo ls-tree -r --name-only main)
-  if ($mainFiles -contains 'slice.txt') { Ok 'finalizer: slice landed on main' } else { Bad 'finalizer: slice missing from main' }
-  if ($mainFiles -notcontains '.showtime-worktree.json') { Ok 'finalizer: no marker on main' } else { Bad 'finalizer: marker merged into main' }
-  if (-not (Test-Path -LiteralPath $wtPath)) { Ok 'finalizer: worktree removed' } else { Bad 'finalizer: worktree still present' }
-} catch {
-  Bad "finalizer $_"
-} finally {
-  Remove-Item -LiteralPath $fxRoot -Recurse -Force -ErrorAction SilentlyContinue
+foreach ($gone in @('showtime-worktree.ps1', 'showtime-scoped-commit.ps1')) {
+  if (Test-Path -LiteralPath (Join-Path $PSScriptRoot $gone)) {
+    Bad "disarm: $gone is back — Show Time must never own a git lifecycle"
+  } else { Ok "disarm: $gone stays deleted" }
 }
+
+# Prose says "no git authority" and "same git root"; those are not invocations.
+# Strip comments and quoted strings first, so only executable code is scanned.
+function Remove-NonCode([string]$line) {
+  $s = $line -replace '(?<!`)"[^"]*"', '""'     # double-quoted strings
+  $s = $s -replace "(?<!``)'[^']*'", "''"       # single-quoted strings
+  $s = $s -replace '\s#.*$', ''                 # trailing PowerShell comment
+  $s = $s -replace '//.*$', ''                  # JS line comment
+  $s = $s -replace '^\s*[*#].*$', ''            # block-comment body / full-line comment
+  return $s
+}
+
+$writes = [System.Collections.Generic.List[string]]::new()
+foreach ($f in (Get-ChildItem -LiteralPath $PSScriptRoot -Include '*.ps1', '*.mjs' -File -Recurse)) {
+  if ($f.Name -eq 'test-showtime.ps1') { continue }   # this file names the verbs it forbids
+  # Blank out block comments (<# .. #>, /* .. */) but keep line numbers aligned.
+  $raw = Get-Content -LiteralPath $f.FullName -Raw
+  $raw = [regex]::Replace($raw, '(?s)<#.*?#>|/\*.*?\*/', {
+      param($m) ($m.Value -replace '[^\r\n]', ' ')
+    })
+  $n = 0
+  foreach ($line in ($raw -split "\r?\n")) {
+    $n++
+    $code = Remove-NonCode $line
+    if (-not $code.Trim()) { continue }
+    foreach ($m in [regex]::Matches($code, $gitCall)) {
+      $verb = $m.Groups['verb'].Value
+      if ($gitRead -notcontains $verb) {
+        $writes.Add(("{0}:{1} git {2}" -f $f.Name, $n, $verb))
+      }
+    }
+  }
+}
+if ($writes.Count -eq 0) {
+  Ok 'disarm: every git call in scripts/ is a read-only verb'
+} else {
+  Bad ("disarm: non-read-only git call(s): {0}" -f ($writes -join '; '))
+}
+
+# The allowlist is only as good as its ability to catch the house idiom. Prove it.
+$bait = '& git -C $repo commit -m x'
+$baitVerb = ([regex]::Match($bait, $gitCall)).Groups['verb'].Value
+if ($baitVerb -eq 'commit') {
+  Ok 'disarm: sweep catches the `git -C <dir> commit` idiom'
+} else {
+  Bad "disarm: sweep BLIND to `git -C <dir> commit` (matched verb='$baitVerb') — it would not have caught the deleted scripts"
+}
+
+$launchSrc = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'launch-showtime.ps1') -Raw
+if ($launchSrc -notmatch 'WORKTREE_PATH') { Ok 'disarm: launch creates no worktree' } else { Bad 'disarm: launch still creates a worktree' }
 
 try {
   $base = (& pwsh -NoProfile -File $Register -Action ensure 2>&1 | Where-Object { $_ -match 'http://127\.0\.0\.1:\d+' } | Select-Object -Last 1)

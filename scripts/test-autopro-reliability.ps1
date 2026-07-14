@@ -15,7 +15,6 @@ Write-Output '==== Autopro reliability tests ===='
 foreach ($name in @(
     'autopro-runner.ps1',
     'launch-showtime.ps1',
-    'showtime-worktree.ps1',
     'autopro-status.ps1',
     'stop-autopro.ps1',
     'worker-engines.ps1',
@@ -31,7 +30,6 @@ foreach ($name in @(
 
 $runnerSrc = Get-Content -LiteralPath (Join-Path $Scripts 'autopro-runner.ps1') -Raw
 $launchSrc = Get-Content -LiteralPath (Join-Path $Scripts 'launch-showtime.ps1') -Raw
-$wtSrc = Get-Content -LiteralPath (Join-Path $Scripts 'showtime-worktree.ps1') -Raw
 $statusSrc = Get-Content -LiteralPath (Join-Path $Scripts 'autopro-status.ps1') -Raw
 
 # ---- P1-T1: multi-engine worker resolve + argv fail-fast ---------------------
@@ -151,49 +149,20 @@ function Test-StatusReconcile([string]$state, [bool]$pidAlive, [bool]$runnerMatc
 if ((Test-StatusReconcile 'running' $false $false) -eq 'ZOMBIE') { Ok 'boot: dead+running => ZOMBIE' } else { Bad 'boot: dead+running must be ZOMBIE' }
 if ((Test-StatusReconcile 'running' $true $false) -eq 'ARMED') { Ok 'boot: alive+running => ARMED' } else { Bad 'boot: alive+running must be ARMED' }
 
-# ---- P1-T6: detached HEAD worktree base -------------------------------------
-if ($wtSrc -match "if \(\`$b -eq 'HEAD'" -or $wtSrc -match "eq 'HEAD'") {
-  Ok 'worktree: detects detached HEAD'
-} else { Bad 'worktree: detached HEAD check missing' }
-if ($wtSrc -match 'never fall back to ''main''' -or $wtSrc -match 'never fall back to') {
-  Ok 'worktree: refuses silent main fallback'
-} else { Bad 'worktree: main-fallback note missing' }
-
-# Live git fixture: detached worktree base = HEAD sha
-$fx = Join-Path $env:TEMP ('autopro-wt-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
-try {
-  New-Item -ItemType Directory -Force -Path $fx | Out-Null
-  & git init -q -b main $fx 2>&1 | Out-Null
-  & git -C $fx config user.email 'autopro@test.local' | Out-Null
-  & git -C $fx config user.name 'Autopro Test' | Out-Null
-  & git -C $fx config commit.gpgsign false | Out-Null
-  'x' | Set-Content -LiteralPath (Join-Path $fx 'a.txt') -Encoding utf8
-  & git -C $fx add -A 2>&1 | Out-Null
-  & git -C $fx commit -q -m 'seed' 2>&1 | Out-Null
-  $sha = (& git -C $fx rev-parse HEAD).Trim()
-  & git -C $fx checkout -q --detach HEAD 2>&1 | Out-Null
-  $abbrev = (& git -C $fx rev-parse --abbrev-ref HEAD).Trim()
-  if ($abbrev -eq 'HEAD') { Ok 'worktree: fixture is detached' } else { Bad "worktree: expected detached got $abbrev" }
-
-  # Mirror Get-CurrentBranch
-  function Get-CurrentBranchMirror([string]$dir) {
-    Push-Location -LiteralPath $dir
-    try {
-      $b = (& git rev-parse --abbrev-ref HEAD 2>$null).Trim()
-      if ($b -eq 'HEAD' -or -not $b) {
-        $s = (& git rev-parse HEAD 2>$null).Trim()
-        if ($s) { return $s }
-        return 'HEAD'
-      }
-      return $b
-    } finally { Pop-Location }
-  }
-  $base = Get-CurrentBranchMirror $fx
-  if ($base -eq $sha) { Ok 'worktree: detached base returns full SHA' } else { Bad "worktree: base=$base expected=$sha" }
-  if ($base -ne 'main') { Ok 'worktree: detached base is not main' } else { Bad 'worktree: incorrectly returned main' }
-} finally {
-  Remove-Item -LiteralPath $fx -Recurse -Force -ErrorAction SilentlyContinue
-}
+# ---- P1-T6: Show Time holds ZERO git authority (disarmed) --------------------
+# Was: detached-HEAD base resolution for the worktree finalizer. That whole
+# lifecycle (arm -> commit -> merge -> prune) is deleted: it could strand work in
+# an orphaned tree that only `finish` knew how to bring home. Now we assert the
+# authority cannot come back.
+if ($runnerSrc -notmatch 'showtime-worktree|showtime-scoped-commit') {
+  Ok 'disarm: runner calls no worktree/commit script'
+} else { Bad 'disarm: runner still references a deleted git script' }
+if ($launchSrc -notmatch 'showtime-worktree') {
+  Ok 'disarm: launch calls no worktree script'
+} else { Bad 'disarm: launch still references showtime-worktree' }
+if ($launchSrc -notmatch 'WORKTREE_PATH') {
+  Ok 'disarm: launch creates no worktree'
+} else { Bad 'disarm: launch still creates a worktree' }
 
 # ---- P1-T7: independent gate in this repo -----------------------------------
 $repoRoot = (Resolve-Path (Join-Path $Scripts '..\..\..\..')).Path

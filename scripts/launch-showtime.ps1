@@ -1,8 +1,10 @@
 <#
   launch-showtime.ps1 — arm autopro + open Show Time board (Looplet).
 
-  Creates an isolated git worktree for this session so finish can merge + prune
-  without dragging other chats' dirty files into the commit.
+  Show Time has NO git authority: it creates no worktree, no branch, and never
+  commits, merges, or prunes. It arms the runner and opens the board. Sessions
+  run in the repo on the branch the operator already checked out; the worker's
+  own `work` skill owns every commit.
 
   Unattended autonomy is OFF by default. Arming requires both risk switches
   (skip-permissions is otherwise a silent zero-human loop):
@@ -23,15 +25,13 @@ param(
   [string]$VerifierEngine = '',
   [switch]$AllowOllama,
   [switch]$NoBrowser,
-  # Headless: skip theater ensure/register/open-board; still arm runner + worktree.
+  # Headless: skip theater ensure/register/open-board; still arm the runner.
   # Watch via: Get-Content .claude\scratch\autopro.log -Wait
   [switch]$NoShowTime,
-  [switch]$NoWorktree,
-  [switch]$PushOnFinish,
   # Required together: unattended worker risk (engine-specific skip/yolo/bypass flags)
   [switch]$AllowDangerousSkipPermissions,
   [switch]$IAcceptUnattendedRisk,
-  # Escape hatch: merge on model FINAL_CHECK_STATUS=green without npm/script gate
+  # Escape hatch: accept model FINAL_CHECK_STATUS=green without npm/script gate
   [switch]$AllowModelOnlyFinalCheck,
   # Default-on fresh verifier after every slice. UI diffs require Playwright
   # screenshot + zero console/page errors; red results get bounded repair runs.
@@ -42,11 +42,6 @@ param(
   # Kill hung worker processes after N minutes (0 = no wall-clock kill; still use stall alarm)
   [ValidateRange(0, 480)]
   [int]$MaxSliceMinutes = 90,
-  # base = all mini-branches rejoin the epic branch you armed from (default)
-  # main = each ledger session merges into main/master after check
-  [ValidateSet('base', 'main')]
-  [string]$MergeTarget = 'base',
-  [string]$MainBranch = '',
   [int]$StaleAfterMinutes = 30
 )
 
@@ -54,7 +49,6 @@ $ErrorActionPreference = 'Stop'
 $SkillScripts = $PSScriptRoot
 $Runner = Join-Path $SkillScripts 'autopro-runner.ps1'
 $Register = Join-Path $SkillScripts 'theater-register.ps1'
-$WorktreePs1 = Join-Path $SkillScripts 'showtime-worktree.ps1'
 $StatusPs1 = Join-Path $SkillScripts 'showtime-status.ps1'
 $StopAutoPro = Join-Path $SkillScripts 'stop-autopro.ps1'
 $scratch = Join-Path $Root '.claude\scratch'
@@ -224,38 +218,11 @@ if ($allFlags.Count) {
 Set-Content -LiteralPath $flag -Value ((Get-Date).ToString('o'))
 Remove-Item -LiteralPath (Join-Path $scratch 'auto-chain-paused') -Force -ErrorAction SilentlyContinue
 
-$workDir = $RepoDir
-$baseBranch = ''
-
-if (-not $NoWorktree) {
-  Write-Output "Creating isolated Show Time worktree (merge target: $MergeTarget)…"
-  $wtArgs = @(
-    '-NoProfile', '-File', $WorktreePs1,
-    '-Action', 'create',
-    '-RepoDir', $RepoDir,
-    '-SessionId', $sessionId,
-    '-LedgerHash', $ledgerHash,
-    '-LedgerTitle', $ledgerTitle,
-    '-MergeTarget', $MergeTarget
-  )
-  if ($MainBranch) { $wtArgs += @('-MainBranch', $MainBranch) }
-  $wtOut = & pwsh @wtArgs 2>&1
-  $wtOut | ForEach-Object { Write-Output "worktree> $_" }
-  foreach ($line in $wtOut) {
-    if ("$line" -match '^WORKTREE_PATH=(.+)$') { $workDir = $Matches[1].Trim() }
-    if ("$line" -match '^BASE=(.+)$') { $baseBranch = $Matches[1].Trim() -replace '^origin/', '' }
-  }
-  if (-not (Test-Path -LiteralPath $workDir)) {
-    throw "Worktree create failed — aborting (refusing shared dirty tree). Re-run with -NoWorktree only if you accept risk."
-  }
-  # Ledger is usually gitignored — copy into worktree so `work` finds it
-  $wtScratch = Join-Path $workDir '.claude\scratch'
-  New-Item -ItemType Directory -Force -Path $wtScratch | Out-Null
-  Copy-Item -LiteralPath $ledger -Destination (Join-Path $wtScratch 'ledger.md') -Force
-  Write-Output "WORKTREE=$workDir"
-  Write-Output "BASE_BRANCH=$baseBranch"
-  Write-Output "MERGE_TARGET=$MergeTarget"
-}
+# Show Time has NO git authority. The session runs in the repo itself, on
+# whatever branch the operator already checked out. No worktree is created, no
+# branch is minted, nothing is merged or pruned. Work cannot be stranded in a
+# tree that only `finish` knows how to bring home, because there is no `finish`.
+Write-Output "WORKDIR=$RepoDir (in-place — Show Time creates no worktree or branch)"
 
 function Resolve-ShowTimeBoardUrl {
   # Single source of truth: server.port after ensure (fallback default 8770).
@@ -347,9 +314,9 @@ function Ensure-LoopletCompanion {
 # Do not log a board URL here — port is unknown until ensure; one board URL is emitted later.
 if (Test-Path -LiteralPath $StatusPs1) {
   try {
-    & pwsh -NoProfile -File $StatusPs1 -RepoDir $RepoDir -Action init -SessionId $sessionId -LedgerPath $ledger -MergeTarget $MergeTarget -WorktreeDir $workDir 2>&1 |
+    & pwsh -NoProfile -File $StatusPs1 -RepoDir $RepoDir -Action init -SessionId $sessionId -LedgerPath $ledger 2>&1 |
       ForEach-Object { Write-Output "status> $_" }
-    & pwsh -NoProfile -File $StatusPs1 -RepoDir $RepoDir -Action event -SessionId $sessionId -Level info -Event "Launch Show Time · merge=$MergeTarget · worktree=$workDir" -LedgerPath $ledger -MergeTarget $MergeTarget -WorktreeDir $workDir 2>&1 |
+    & pwsh -NoProfile -File $StatusPs1 -RepoDir $RepoDir -Action event -SessionId $sessionId -Level info -Event "Launch Show Time · repo=$RepoDir · no git authority" -LedgerPath $ledger 2>&1 |
       ForEach-Object { Write-Output "status> $_" }
     Write-Output "STATUS_LOG=$RepoDir\.claude\scratch\SHOWTIME-STATUS.md"
   } catch {
@@ -457,7 +424,7 @@ if (-not $NoShowTime) {
     '-Action', 'register',
     '-OpenRegister',
     '-SessionId', $sessionId,
-    '-RepoDir', $workDir,
+    '-RepoDir', $RepoDir,
     '-Root', $Root,
     '-LedgerPath', $ledger,
     '-LedgerHash', $ledgerHash,
@@ -488,11 +455,9 @@ $runnerArgParts = @(
   '-NoProfile', '-File', (Quote-Arg $Runner),
   '-Root', (Quote-Arg $Root),
   '-RepoDir', (Quote-Arg $RepoDir),
-  '-WorktreeDir', (Quote-Arg $workDir),
   '-SessionId', (Quote-Arg $sessionId),
   '-LedgerHash', (Quote-Arg $ledgerHash),
   '-LedgerTitle', (Quote-Arg $ledgerTitle),
-  '-MergeTarget', $MergeTarget,
   '-SkipPermissions',
   '-VerifierRepairAttempts', $VerifierRepairAttempts
 )
@@ -502,14 +467,10 @@ if ($Model) { $runnerArgParts += @('-Model', (Quote-Arg $Model)) }
 $runnerArgParts += @('-Engine', (Quote-Arg $resolvedEngine.Engine))
 if ($VerifierEngine) { $runnerArgParts += @('-VerifierEngine', (Quote-Arg $VerifierEngine)) }
 if ($AllowOllama) { $runnerArgParts += '-AllowOllama' }
-if ($NoWorktree) { $runnerArgParts += '-NoWorktree' }
-if ($PushOnFinish) { $runnerArgParts += '-PushOnFinish' }
 if ($AllowModelOnlyFinalCheck) { $runnerArgParts += '-AllowModelOnlyFinalCheck' }
 if ($NoSliceVerifier) { $runnerArgParts += '-NoSliceVerifier' }
 if ($VerifierModel) { $runnerArgParts += @('-VerifierModel', (Quote-Arg $VerifierModel)) }
 if ($MaxSliceMinutes -gt 0) { $runnerArgParts += @('-MaxSliceMinutes', "$MaxSliceMinutes") }
-if ($baseBranch) { $runnerArgParts += @('-BaseBranch', (Quote-Arg $baseBranch)) }
-if ($MainBranch) { $runnerArgParts += @('-MainBranch', (Quote-Arg $MainBranch)) }
 $runnerArgLine = ($runnerArgParts -join ' ')
 $pwshExe = (Get-Command pwsh).Source
 # Durable detach: Win32_Process.Create starts outside the parent Job Object.
@@ -521,7 +482,7 @@ $runnerPid = 0
 try {
   $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
     CommandLine      = $commandLine
-    CurrentDirectory = $workDir
+    CurrentDirectory = $RepoDir
   }
   if ($created.ReturnValue -eq 0 -and $created.ProcessId) {
     $runnerPid = [int]$created.ProcessId
@@ -535,10 +496,30 @@ try {
 if (-not $runnerPid) {
   # Fallback: cmd start opens a new window group (usually outside the job).
   $cmdLine = '/c start "autopro-{0}" /MIN "{1}" {2}' -f $sessionId, $pwshExe, $runnerArgLine
-  $fallback = Start-Process -FilePath 'cmd.exe' -ArgumentList $cmdLine -WindowStyle Hidden -PassThru
-  Start-Sleep -Milliseconds 1000
-  $runnerPid = if ($fallback) { $fallback.Id } else { 0 }
+  $null = Start-Process -FilePath 'cmd.exe' -ArgumentList $cmdLine -WindowStyle Hidden -PassThru
   Write-Output 'RUNNER_DETACH=cmd-start'
+  # Never record cmd.exe's PID: cmd exits the moment `start` has spawned the
+  # pwsh window, so the boot loop's dead-PID check would deterministically
+  # BOOT_FAIL (reason=runner-pid-dead). Resolve the REAL runner PID by
+  # commandline (autopro-runner.ps1 + this sessionId) instead.
+  $resolveDeadline = (Get-Date).AddSeconds(10)
+  while ((Get-Date) -lt $resolveDeadline -and -not $runnerPid) {
+    Start-Sleep -Milliseconds 500
+    try {
+      $cand = Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+          $_.CommandLine -and
+          $_.CommandLine -match 'autopro-runner\.ps1' -and
+          $_.CommandLine -match [regex]::Escape($sessionId)
+        } | Select-Object -First 1
+      if ($cand) { $runnerPid = [int]$cand.ProcessId }
+    } catch {}
+  }
+  if (-not $runnerPid) {
+    # Unknown PID (0) is honest: the boot check then relies on the armed: log
+    # line alone instead of a false dead-PID verdict.
+    Write-Output 'RUNNER_PID_UNRESOLVED=cmd-start spawned but runner pwsh not found yet'
+  }
 }
 Start-Sleep -Milliseconds 600
 Write-Output ("RUNNER_PID={0}" -f $runnerPid)
@@ -555,9 +536,7 @@ try {
     ledgerHash  = $ledgerHash
     ledgerTitle = $ledgerTitle
     repoDir     = $RepoDir
-    workDir     = $workDir
     runnerPid   = $runnerPid
-    mergeTarget = $MergeTarget
     engine      = $resolvedEngine.Engine
     engineDisplay = $resolvedEngine.Display
     model       = $Model
@@ -626,9 +605,7 @@ if ($bootArmed) {
       ledgerHash  = $ledgerHash
       ledgerTitle = $ledgerTitle
       repoDir     = $RepoDir
-      workDir     = $workDir
       runnerPid   = $runnerPid
-      mergeTarget = $MergeTarget
       state       = 'blocked'
       outcome     = "boot-fail-$why"
       updatedAt   = (Get-Date).ToString('o')
@@ -755,9 +732,8 @@ Write-Output ("ENGINE={0}" -f $resolvedEngine.Engine)
 Write-Output ("ENGINE_DISPLAY={0}" -f $resolvedEngine.Display)
 Write-Output "RUNNER_PID=$runnerPid"
 Write-Output "LAUNCHER_PID=$($proc.Id)"
-Write-Output "WORK_DIR=$workDir"
+Write-Output "WORK_DIR=$RepoDir"
 Write-Output "SHOWTIME_URL=$boardUrl"
-Write-Output "MERGE_TARGET=$MergeTarget"
 Write-Output "LEDGER_HASH=$ledgerHash"
 Write-Output "LEDGER_TITLE=$ledgerTitle"
 Write-Output "SKIP_PERMISSIONS=1"
