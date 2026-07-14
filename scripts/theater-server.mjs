@@ -1459,6 +1459,90 @@ function consumeSteers(sessionId) {
   return { steers: open }
 }
 
+// --- SC-04: the projector (READ-ONLY) -------------------------------------
+// Show Time projects; it does not act. This block is the ONLY place the board
+// learns what a repo is doing, and it can do exactly one thing: GET
+// /projector/status from that repo's companion. There is no git here, no spawn,
+// no write of any kind — the board physically cannot strand work (SC-02).
+// The one inbound path stays the nudge, which appends to the repo's
+// showtime-inbox.jsonl for the runner to accept or IGNORE. A request, not a
+// command.
+const COMPANION_BASE = process.env.LOOPLET_COMPANION_BASE || 'http://127.0.0.1:4321'
+// Cards refresh on every poll; a git fork per card per poll would be silly.
+const PROJECTOR_TTL_MS = Number(process.env.SHOWTIME_PROJECTOR_TTL_MS || 4000)
+const PROJECTOR_TIMEOUT_MS = 2500
+const projectorCache = new Map() // repoPath -> { at, data }
+
+/** Fetch one repo's live state. NEVER throws — a dead companion is a card. */
+async function projectOne(repoPath) {
+  const key = String(repoPath || '')
+  const hit = projectorCache.get(key)
+  if (hit && Date.now() - hit.at < PROJECTOR_TTL_MS) return hit.data
+  let data
+  try {
+    const ac = new AbortController()
+    const t = setTimeout(() => ac.abort(), PROJECTOR_TIMEOUT_MS)
+    const r = await fetch(
+      `${COMPANION_BASE}/projector/status?cwd=${encodeURIComponent(key)}`,
+      { signal: ac.signal },
+    ).finally(() => clearTimeout(t))
+    const j = await r.json()
+    data = j && j.ok
+      ? { online: true, repoPath: key, ...j }
+      // Companion answered but git didn't (not a repo / outside LOOPLET_ROOTS).
+      // That is NOT "offline" — the companion is plainly up. Saying offline here
+      // would send the operator hunting a dead server that is actually running.
+      : { online: true, repoPath: key, ok: false, error: (j && j.error) || 'unavailable' }
+  } catch (e) {
+    // Companion down / unreachable / timed out → degrade, don't throw.
+    data = {
+      online: false,
+      repoPath: key,
+      ok: false,
+      error: e?.name === 'AbortError' ? 'companion timeout' : 'companion offline',
+    }
+  }
+  projectorCache.set(key, { at: Date.now(), data })
+  return data
+}
+
+/**
+ * One card per distinct repo behind the live lanes.
+ * Emits only what the board actually renders — repoPath (the join key),
+ * repoName, and the live projection. The lanes' own session data already
+ * arrives via /api/sessions; re-shipping it here would be dead payload on
+ * every poll.
+ */
+async function projectRepos() {
+  const roots = new Map() // repoPath -> { repoName, sessionIds[] }
+  for (const raw of listSessions()) {
+    const s = enrich(raw)
+    const repoPath = normalizeRepoRoot(s.primaryRepoPath || s.repoPath || '')
+    if (!repoPath) continue
+    if (!roots.has(repoPath)) {
+      // Name the card after the path we ACTUALLY projected, not repoNameOf(s):
+      // that reads s.repoPath, which on a legacy lane is a dead
+      // .worktrees-showtime/sess_* leaf. repoNameFromPath then walks up past the
+      // worktree dir and yields the PARENT of the repo (e.g. "LOOPLET" instead
+      // of "ai-sidebar") — a card labelled with the wrong repo. repoPath here is
+      // already normalizeRepoRoot()'d, so it is the real root.
+      roots.set(repoPath, { repoName: repoNameFromPath(repoPath) || s.repoId || '', sessionIds: [] })
+    }
+    // Publish which lanes map to this repo. The CLIENT must not re-derive the
+    // key: that would mean a second copy of the worktree-stripping regexes in
+    // the browser, and two copies of a normalizer drift.
+    roots.get(repoPath).sessionIds.push(s.sessionId)
+  }
+  const list = [...roots.entries()].map(([repoPath, v]) => ({ repoPath, ...v }))
+  const live = await Promise.all(list.map((r) => projectOne(r.repoPath)))
+  // Evict cache entries for repos no longer on the board — sessions come and go,
+  // and an unevicted Map keyed by repoPath would grow for the server's lifetime.
+  for (const key of projectorCache.keys()) {
+    if (!roots.has(key)) projectorCache.delete(key)
+  }
+  return list.map((r, i) => ({ ...r, live: live[i] }))
+}
+
 async function handleApi(req, res, url) {
   if (req.method === 'OPTIONS') {
     // Deliberately no ACAO: cross-origin preflights must fail.
@@ -1764,6 +1848,13 @@ async function handleApi(req, res, url) {
   if (url.pathname === '/api/tips' && req.method === 'GET') {
     const tips = readJsonSafe(path.join(THEATER_DIR, 'tips.json'), [])
     return send(res, 200, { tips })
+  }
+
+  // SC-04 — the projection. Live repo truth, straight from each repo's own
+  // companion. Read-only by construction: see projectRepos().
+  if (url.pathname === '/api/projector' && req.method === 'GET') {
+    const repos = await projectRepos()
+    return send(res, 200, { ok: true, repos, at: nowIso() })
   }
 
   // Handover folders (operator desk) — auto-deliver + resume undelivered on boot

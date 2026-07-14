@@ -364,6 +364,32 @@ input,textarea,[contenteditable="true"]{
 .claw-branch-card .bh .bm{font-size:9px;color:var(--muted);margin-top:2px}
 .bh-actions{display:flex;align-items:center;gap:6px;flex:none}
 /* Nudge — reconnect ping next to status badge */
+/* SC-04: the projection — live repo truth under each lane. Read-only. */
+.lane-live{
+  display:flex;align-items:center;gap:6px;
+  margin-top:4px;padding:3px 7px;
+  font:11px/1.4 ui-monospace,Menlo,Consolas,monospace;
+  border-radius:5px;
+  border:1px solid rgba(94,234,212,.22);
+  background:rgba(94,234,212,.06);
+  color:var(--cyan);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.lane-live .dot{width:6px;height:6px;border-radius:50%;background:var(--cyan);flex:0 0 auto;box-shadow:0 0 6px currentColor}
+.lane-live .dim{color:rgba(226,232,240,.5);font-weight:400}
+.lane-live .head{overflow:hidden;text-overflow:ellipsis}
+.lane-live.off{border-color:rgba(148,163,184,.25);background:rgba(148,163,184,.07);color:rgba(148,163,184,.85)}
+.lane-live.off .dot{background:rgba(148,163,184,.7);box-shadow:none}
+.lane-live.warn{border-color:rgba(251,191,36,.35);background:rgba(251,191,36,.08);color:#fbbf24}
+.lane-live.warn .dot{background:#fbbf24}
+/* Repo is NOT on the branch this lane claims — the loud case. */
+.lane-live.drift{border-color:rgba(251,113,133,.5);background:rgba(251,113,133,.1);color:var(--rose)}
+.lane-live.drift .dot{background:var(--rose)}
+.lane-live .drift-tag{
+  padding:0 5px;border-radius:3px;
+  background:rgba(251,113,133,.2);border:1px solid rgba(251,113,133,.45);
+  color:var(--rose);font-weight:700;
+}
 .btn-nudge{
   font-size:8px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;
   padding:3px 8px;border-radius:4px;cursor:pointer;flex:none;
@@ -1196,6 +1222,16 @@ const SELECTED_AGENT_KEY='st-selected-agent'
 let nudgeUi = {}
 let nudgeTickTimer = null
 let handovers=[] // operator notes (single folder → modal list)
+/**
+ * SC-04 — the PROJECTION: live repo truth from each repo's own companion,
+ * keyed by normalized repoPath. This is NOT the same as s.branch: that is what
+ * the runner last *said*. This is what the repo *is*. They diverge exactly when
+ * a runner dies mid-slice — the case the board most needs to be honest about.
+ * Read-only: the board renders this and can post a nudge. It runs no git.
+ */
+let projector={} // repoPath -> { online, branch, dirty, untracked, ahead, head, error }
+let projectorKeyBySession={} // sessionId -> repoPath, as keyed BY THE SERVER
+let projectorDirty=false // repaint only when the projection actually changed
 let hoModalOpen=false
 let hoModalMode='handover' // 'handover' | 'orch' — SC-07: same modal, ORCH previous-notes source
 let viewMode = localStorage.getItem('st-view') || 'map' // map | list | claw
@@ -1774,6 +1810,7 @@ function renderLanes(){
         ${pacOnTrack}
       </div>
       <div class="lane-sub">${esc(sub)}</div>
+      ${liveStripHtml(s)}
       ${qprev}
     </div>`
   }).join('')
@@ -3497,6 +3534,73 @@ function wireLiveStream(){
  * manual SYNC always reconnects the live stream + health-checks (browser cache escape hatch).
  * Never wipe a good MAP with a black OFFLINE slab on a transient poll failure.
  */
+/**
+ * SC-04 — pull the projection. A failure here must NEVER blank the board: the
+ * lanes are still true even when no companion is reachable, so we degrade the
+ * live strip to "offline" and leave everything else painted.
+ */
+async function loadProjector(){
+  let next
+  try{
+    const r = await fetchLive('/api/projector')
+    if(!r.ok) throw new Error('projector '+r.status)
+    const j = await r.json()
+    next = {}
+    for(const repo of (j.repos||[])){
+      next[repo.repoPath] = { ...(repo.live||{}), repoName: repo.repoName }
+      // The server already normalized this path (normalizeRepoRoot). Publish the
+      // key→sessions mapping so the client NEVER re-derives it: a second copy of
+      // those worktree regexes in the browser is exactly how the two drift apart.
+      for(const sid of (repo.sessionIds||[])) projectorKeyBySession[sid] = repo.repoPath
+    }
+  }catch{
+    // Board's own server unreachable → mark every known repo offline rather
+    // than silently showing the last-good branch as if it were current.
+    next = {}
+    for(const k of Object.keys(projector)) next[k] = { online:false, error:'board offline' }
+  }
+  // Only repaint when something actually moved — this runs every 2s poll.
+  if(JSON.stringify(next) !== JSON.stringify(projector)) projectorDirty = true
+  projector = next
+}
+
+/**
+ * The live strip: what the REPO says, next to what the runner said.
+ * Flags drift — a lane claiming branch X while the repo sits on Y is the
+ * signal that a runner died or was never really there.
+ */
+function liveStripHtml(s){
+  // Key comes from the server (it already normalized the repo root); the client
+  // does not recompute it.
+  const live = projector[projectorKeyBySession[s.sessionId]] || null
+  if(!live) return ''
+  if(!live.online){
+    return `<div class="lane-live off" title="${esc(live.error||'companion offline')}">
+      <span class="dot"></span>REPO OFFLINE<span class="dim"> · ${esc(live.error||'no companion')}</span>
+    </div>`
+  }
+  if(live.ok === false){
+    return `<div class="lane-live warn" title="${esc(live.error||'')}">
+      <span class="dot"></span>NO REPO STATE<span class="dim"> · ${esc(live.error||'unavailable')}</span>
+    </div>`
+  }
+  const bits=[]
+  const dirty=(live.dirty||0)+(live.untracked||0)
+  bits.push(dirty ? `${dirty} dirty` : 'clean')
+  if(live.ahead) bits.push(`↑${live.ahead}`)
+  if(live.behind) bits.push(`↓${live.behind}`)
+  // Drift: the repo's real branch vs the branch this lane claims.
+  const claimed = String(s.branch||'').trim()
+  const actual = String(live.branch||'').trim()
+  const drift = claimed && actual && claimed !== actual
+  return `<div class="lane-live ${drift?'drift':''}" title="${esc(live.head||'')}">
+    <span class="dot"></span>${esc(actual||'—')}
+    ${drift?`<span class="drift-tag" title="lane reports ${esc(claimed)} — repo is on ${esc(actual)}">≠ ${esc(claimed)}</span>`:''}
+    <span class="dim"> · ${esc(bits.join(' · '))}</span>
+    ${live.head?`<span class="dim head"> · ${esc(live.head)}</span>`:''}
+  </div>`
+}
+
 async function refresh(source='manual', opts={}){
   if(syncing) return
   const force = source==='manual' || source==='boot' || opts.reconnectLive===true
@@ -3519,6 +3623,12 @@ async function refresh(source='manual', opts={}){
     sessions = j.sessions||[]
     fleets = Array.isArray(j.fleets) ? j.fleets : []
     ensureSelectedAgent()
+    // NOT awaited: the projection is supplementary (a strip under each lane),
+    // but it reaches out to each repo's companion, which can be slow or dead
+    // (up to PROJECTOR_TIMEOUT_MS). Awaiting it here would stall the WHOLE 2s
+    // poll — lanes, mission card, fleet totals — behind one unreachable
+    // companion. Fire it, repaint when it lands.
+    loadProjector().then(()=>{ if(projectorDirty){ projectorDirty=false; render() } })
     markSynced(source, true)
     // SYNC / poll always keeps mission card on top of Pac with fresh fleet totals
     if(source==='manual' || source==='boot') missionFloatOpen = true
