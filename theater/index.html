@@ -715,9 +715,39 @@ input,textarea,[contenteditable="true"]{
 */
 /* Narrow arcade column — mission status + Pac track share this width */
 #lanes{
-  display:flex;flex-direction:column;gap:14px;
-  width:min(380px, 92vw); min-width:0
+  display:flex;flex-direction:column;gap:18px;
+  width:min(420px, 94vw); min-width:0
 }
+/* SC-03: MAP fleet sections (one block per repo root) */
+.map-fleet{
+  display:flex;flex-direction:column;gap:10px;
+  padding:10px 10px 12px;border-radius:16px;
+  border:1px solid rgba(251,146,60,.28);
+  background:linear-gradient(180deg,rgba(28,22,16,.55),rgba(12,14,18,.4))
+}
+.map-fleet.side{
+  border-color:rgba(94,234,212,.28);
+  background:linear-gradient(180deg,rgba(14,22,24,.55),rgba(12,14,18,.4))
+}
+.map-fleet-h{
+  display:flex;flex-wrap:wrap;align-items:center;gap:8px;
+  padding:2px 4px 6px;border-bottom:1px solid rgba(255,255,255,.06)
+}
+.map-fleet-h .role{
+  font-size:9px;font-weight:900;letter-spacing:.12em;padding:3px 8px;border-radius:999px;
+  border:1px solid rgba(251,146,60,.45);color:#fdba74;background:rgba(251,146,60,.1)
+}
+.map-fleet.side .map-fleet-h .role{
+  border-color:rgba(94,234,212,.4);color:#5eead4;background:rgba(94,234,212,.08)
+}
+.map-fleet-h .title{
+  font-size:11px;font-weight:800;color:var(--ink);letter-spacing:.04em;
+  min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+}
+.map-fleet-h .count{
+  font-size:9px;font-weight:700;color:var(--muted);font-family:ui-monospace,Consolas,monospace
+}
+.map-fleet-lanes{display:flex;flex-direction:column;gap:12px}
 .lane{
   width:100%;
   padding:10px 12px 12px;
@@ -798,6 +828,27 @@ input,textarea,[contenteditable="true"]{
 }
 .h-pac svg{width:28px;height:28px;display:block}
 .h-pac .mouth{transform-origin:20px 20px;animation:pac-chomp .32s ease-in-out infinite alternate}
+/* SC-04: calm pac = stiff/start (projector / idle / unarmed) — no chomp, not "working" */
+.h-pac.calm{
+  opacity:.72;
+  filter:grayscale(.3) drop-shadow(0 0 4px rgba(253,224,71,.25))
+}
+.h-pac.calm .mouth{animation:none}
+/* SC-04: corpse strip — collapsed DEAD lane, no progress crawl */
+.lane.corpse-strip{
+  opacity:.78;padding:8px 12px;
+  border-color:rgba(251,113,133,.35);
+  background:linear-gradient(145deg,rgba(36,18,22,.9),rgba(22,18,24,.85))
+}
+.lane.corpse-strip .track{
+  height:28px;border-radius:14px;display:flex;align-items:center;justify-content:center;
+  border-color:rgba(251,113,133,.4)
+}
+.lane.corpse-strip .corpse-label{
+  font:800 10px ui-monospace,Consolas,monospace;letter-spacing:.12em;color:#fda4af
+}
+.lane[data-honesty="projector"] .lane-h .meta{color:var(--muted)}
+.lane[data-honesty="unarmed"]{opacity:.9}
 @media (prefers-reduced-motion:reduce){
   .h-pac .mouth{animation:none}
   .claw-icon.orbiting{animation:none}
@@ -1662,8 +1713,9 @@ function pacManSvg(size=32){
 function pacGlyphHtml(){
   return `<div class="glyph pac" aria-hidden="true">${pacManSvg(32)}</div><div class="tag">PAC</div>`
 }
-function pacSpriteHtml(leftPct){
-  return `<div class="h-pac" style="left:calc(${leftPct}% - 14px)">${pacManSvg(28)}</div>`
+function pacSpriteHtml(leftPct, calm=false){
+  const cls = calm ? 'h-pac calm' : 'h-pac'
+  return `<div class="${cls}" style="left:calc(${leftPct}% - 14px)">${pacManSvg(28)}</div>`
 }
 function clawGlyphHtml(){
   return `<div class="glyph claw" aria-hidden="true">${invaderPixelSvg(2.5)}</div><div class="tag">CLAW</div>`
@@ -1807,6 +1859,110 @@ function armMissionTick(){
   }, 1000)
 }
 
+/** One Pac lane HTML (MAP). Honesty via laneHonesty (SC-02/SC-04). */
+function mapLaneHtml(s){
+  const h = laneHonesty(s)
+  const {done,total}=pctOfLedger(s)
+  const prog = total>0 ? done/total : (s.progress||0)
+  const st=s.status||'running'
+  const clear = st==='complete' || (done>=total && total>0)
+  const queued = st==='queued' || (done===0 && st!=='running' && st!=='in-progress' && !s.needsInput && st!=='stalled' && st!=='blocked' && st!=='needs_input')
+  // Pac position from ledger % for everyone (including projectors) — never fake crawl on corpse
+  const pacPct = clear ? 96 : Math.min(0.92, Math.max(0.04, prog || 0.06))*100
+  const letter = laneLetter(s.lane)
+  const sa = saBadge(s)
+  const title = `${esc(sa)} · ${branchTag(s)}`
+  const qs=oq(s)
+  // SC-04: corpse → collapsed DEAD strip (no pellets, no progress crawl, no RUNNING)
+  if(h.kind==='corpse'){
+    const sub = [s.stopReason || h.label || 'no writer', 'DEAD'].filter(Boolean).join(' — ')
+    return `<div class="lane corpse-strip" data-id="${s.sessionId}" data-honesty="corpse">
+      <div class="lane-h">
+        <div class="name"><span class="letter">${letter}</span> ${title} <span class="dim">· dead</span></div>
+        <div class="meta stalled">${esc(`${done}/${total} · DEAD`)}</div>
+      </div>
+      <div class="track stalled">
+        <span class="corpse-label">DEAD · no writer</span>
+      </div>
+      <div class="lane-sub">${esc(sub)}</div>
+    </div>`
+  }
+  let pellets=''
+  const pelletCount = Math.min(24, Math.max(8, total*2 || 8))
+  for(let i=0;i<pelletCount;i++){
+    const x=((i+0.5)/pelletCount)*100
+    const eaten = x < pacPct - 2
+    // Projectors keep ledger pellets; dim only when unarmed/queued/stalled
+    const dim = h.dim || queued || st==='stalled' || h.kind==='unarmed'
+    pellets += `<div class="pellet ${eaten?'eaten':''} ${dim&&!eaten?'dim':''}" style="left:calc(${x}% - 4px)"></div>`
+  }
+  let ghost=''
+  const gi=(s.lane||1)%GHOST.length
+  // Ghosts for blockers / unarmed board — never on owner-coding; projectors stay calm (no twin ghost chase)
+  const needGhost = h.showGhost || (
+    !h.coding && h.kind!=='projector' && (queued || st==='stalled' || st==='blocked' || st==='needs_input')
+  )
+  if(needGhost){
+    const gx = queued ? Math.min(88, 20 + (s.lane||1)*12) : Math.min(90, pacPct+18)
+    ghost = `<div class="ghost-sprite" style="left:calc(${gx}% - 11px);color:${GHOST[gi]};opacity:.85">${ghostSvg(GHOST[gi])}</div>`
+  }
+  const flash=(h.coding || h.kind==='owner-idle') && (s.needsInput||qs.length||st==='needs_input')?'qflash':''
+  const qprev=qs.length?`<div class="lane-q">? ${esc((qs[0].text||'').slice(0,110))}${qs.length>1?` +${qs.length-1}`:''}</div>`:''
+  // Meta: projector always LEDGER (never twin CLEAR/RUNNING); owner may CLEAR/CODING/…
+  let meta = `${done}/${total}`
+  let metaCls = ''
+  if(h.kind==='projector'){ meta = `${done}/${total} · LEDGER`; metaCls='queued' }
+  else if(h.kind==='unarmed'){ meta = `${done}/${total} · BOARD`; metaCls='queued' }
+  else if(clear){ meta = `${done}/${total} · CLEAR!`; metaCls='clear' }
+  else if(h.coding){ meta = `${done}/${total} · CODING`; metaCls='' }
+  else if(st==='stalled'||st==='blocked'){ meta = `${done}/${total} · ${st.toUpperCase()}`; metaCls='stalled' }
+  else if(st==='needs_input' || s.needsInput || qs.length){ meta = `${done}/${total} · ORCH HOLD`; metaCls='stalled' }
+  else if(queued){ meta = `${done}/${total} · QUEUED`; metaCls='queued' }
+  else if(h.kind==='owner-idle'){ meta = `${done}/${total} · IDLE`; metaCls='queued' }
+  else { meta = `${done}/${total} · ${h.metaHint||''}`.trim() }
+  const sliceLine = s.slice
+    ? `${s.slice.id} ${s.slice.title||''}`.trim()
+    : (s.stopReason || s.branch || h.label || 'IN PROGRESS')
+  // SC-04: RUNNING only when owner-coding — never status-alone for projectors/corpses/unarmed
+  const statusBits = []
+  if(h.coding) statusBits.push('RUNNING')
+  else if(h.metaHint) statusBits.push(h.metaHint)
+  if(done) statusBits.push(`${done} DONE`)
+  if(s.stopReason && h.kind!=='projector') statusBits.push(s.stopReason)
+  const sub = [sliceLine, statusBits.join(' · ')].filter(Boolean).join(' — ')
+  // Track paint: honesty-gated — projectors/unarmed never get raw "running" chrome
+  const trackCls = [
+    h.coding ? st : (clear && (h.kind==='owner-idle') ? 'complete' : ''),
+    !h.coding && (h.kind==='projector' || h.kind==='unarmed' || queued) ? 'queued' : '',
+    h.coding && clear ? 'complete' : '',
+    h.coding && (st==='stalled'||st==='blocked') ? st : '',
+    h.coding && st==='needs_input' ? 'needs_input' : '',
+  ].filter(Boolean).join(' ')
+  // Pac: show when honesty allows; calm = stiff (no chomp); coding = marching chomp
+  let pacOnTrack = ''
+  if(h.showPac){
+    pacOnTrack = pacSpriteHtml(pacPct, h.pacCalm === true)
+  }
+  const kindBadge = h.kind==='projector'
+    ? ' <span class="wt-ref" title="separate ledger · projector only">LEDGER</span>'
+    : (h.kind==='unarmed' ? ' <span class="wt-ref" title="on board · not armed">BOARD</span>' : '')
+  return `<div class="lane ${flash}" data-id="${s.sessionId}" data-honesty="${esc(h.kind)}">
+    ${laneMissionHtml(s)}
+    <div class="lane-h">
+      <div class="name"><span class="letter">${letter}</span> ${title}${kindBadge} <span class="dim">· Chat ${subAgentNo(s)} · ${esc(s.slice?.id||'work')}</span></div>
+      <div class="meta ${metaCls}">${esc(meta)}</div>
+    </div>
+    <div class="track ${trackCls}">
+      ${pellets}
+      ${ghost}
+      ${pacOnTrack}
+    </div>
+    <div class="lane-sub">${esc(sub)}</div>
+    ${liveStripHtml(s)}
+    ${qprev}
+  </div>`
+}
+
 function renderLanes(){
   const root=$('lanes'), empty=$('empty')
   setCols()
@@ -1819,82 +1975,29 @@ function renderLanes(){
     }
     return
   }
-  // Never keep a black OFFLINE slab over live Pac lanes
   empty.style.display='none'
   empty.classList.remove('offline')
   empty.dataset.offline = ''
-  root.innerHTML = sessions.map(s=>{
-    const todos=s.todo||[]
-    const {done,total}=pctOfLedger(s)   // SC-03: single source, matches bug/detail %
-    const prog = total>0 ? done/total : (s.progress||0)
-    // Pac at end when clear; otherwise along progress
-    const st=s.status||'running'
-    const clear = st==='complete' || (done>=total && total>0)
-    const queued = st==='queued' || (done===0 && st!=='running' && st!=='in-progress' && !s.needsInput && st!=='stalled' && st!=='blocked' && st!=='needs_input')
-    const pacPct = clear ? 96 : Math.min(0.92, Math.max(0.04, prog || 0.06))*100
-    // pellets: pink ahead of pac, dim/eaten behind
-    let pellets=''
-    const pelletCount = Math.min(24, Math.max(8, total*2))
-    for(let i=0;i<pelletCount;i++){
-      const x=((i+0.5)/pelletCount)*100
-      const eaten = x < pacPct - 2
-      const dim = queued || st==='stalled'
-      pellets += `<div class="pellet ${eaten?'eaten':''} ${dim&&!eaten?'dim':''}" style="left:calc(${x}% - 4px)"></div>`
-    }
-    // Ghost for queued/stalled/blocked — ahead or mid track
-    let ghost=''
-    const gi=(s.lane||1)%GHOST.length
-    if(queued || st==='stalled' || st==='blocked'){
-      const gx = queued ? Math.min(88, 20 + (s.lane||1)*12) : Math.min(90, pacPct+18)
-      ghost = `<div class="ghost-sprite" style="left:calc(${gx}% - 11px);color:${GHOST[gi]}">${ghostSvg(GHOST[gi])}</div>`
-    } else if(!clear && prog < 1){
-      const gx = Math.min(94, pacPct+14)
-      ghost = `<div class="ghost-sprite" style="left:calc(${gx}% - 11px);color:${GHOST[gi]};opacity:.85">${ghostSvg(GHOST[gi])}</div>`
-    }
-    const qs=oq(s)
-    const flash=s.needsInput||qs.length||st==='needs_input'?'qflash':''
-    const qprev=qs.length?`<div class="lane-q">? ${esc((qs[0].text||'').slice(0,110))}${qs.length>1?` +${qs.length-1}`:''}</div>`:''
-    const letter = laneLetter(s.lane)
-    const sa = saBadge(s)
-    // Branch-first: "<branch> · <sessId>" (SC-02). branchTag returns HTML — do not esc() the title.
-    const title = `${esc(sa)} · ${branchTag(s)}`
-    let meta = `${done}/${total}`
-    let metaCls = ''
-    if(clear){ meta = `${done}/${total} · CLEAR!`; metaCls='clear' }
-    else if(st==='stalled'||st==='blocked'){ meta = `${done}/${total} · ${st.toUpperCase()}`; metaCls='stalled' }
-    else if(queued){ meta = `${done}/${total} · QUEUED`; metaCls='queued' }
-    else if(st==='needs_input' || s.needsInput || oq(s).length){ meta = `${done}/${total} · ORCH HOLD`; metaCls='stalled' }
-    else { meta = `${done}/${total}` }
-    // status line under track (cyan like reference)
-    const sliceLine = s.slice
-      ? `${s.slice.id} ${s.slice.title||''}`.trim()
-      : (s.stopReason || s.branch || 'IN PROGRESS')
-    const statusBits = []
-    if(s.slice?.state==='in-progress' || st==='running') statusBits.push('RUNNING')
-    if(done) statusBits.push(`${done} DONE`)
-    if(s.stopReason) statusBits.push(s.stopReason)
-    const sub = [sliceLine, statusBits.join(' · ')].filter(Boolean).join(' — ')
-    const trackCls = [st, clear?'complete':'', queued?'queued':''].filter(Boolean).join(' ')
-    // if queued with ghost only, still show pac at start when running-ish
-    const showPac = !queued || st==='running' || clear || st==='needs_input' || st==='stalled'
-    const pacOnTrack = (queued && !clear) ? '' : (showPac ? pacSpriteHtml(pacPct) : '')
-    // Mission status attached to top of THIS Pac-Man — same width as the lane/track
-    return `<div class="lane ${flash}" data-id="${s.sessionId}">
-      ${laneMissionHtml(s)}
-      <div class="lane-h">
-        <div class="name"><span class="letter">${letter}</span> ${title} <span class="dim">· Chat ${subAgentNo(s)} · ${esc(s.slice?.id||'work')}</span></div>
-        <div class="meta ${metaCls}">${esc(meta)}</div>
-      </div>
-      <div class="track ${trackCls}">
-        ${pellets}
-        ${ghost}
-        ${pacOnTrack}
-      </div>
-      <div class="lane-sub">${esc(sub)}</div>
-      ${liveStripHtml(s)}
-      ${qprev}
-    </div>`
-  }).join('')
+  // SC-03: one MAP section per repo root (same groupSessionsByFleet as CLAW)
+  const groups = groupSessionsByFleet(sessions)
+  if(!groups.length){
+    root.innerHTML = sessions.map(s=>mapLaneHtml(s)).join('')
+  } else {
+    root.innerHTML = groups.map(g=>{
+      const role = g.role==='primary' ? 'MAIN' : 'SIDE'
+      const repoBit = (g.path||g.repo||'').replace(/\\/g,'/').split('/').filter(Boolean).slice(-1)[0] || g.repo || 'repo'
+      const n = (g.sessions||[]).length
+      const lanes = (g.sessions||[]).map(s=>mapLaneHtml(s)).join('')
+      return `<div class="map-fleet ${g.role||'side'}" data-fleet-key="${esc(g.key||g.fleetId||'')}">
+        <div class="map-fleet-h">
+          <span class="role">${esc(role)}</span>
+          <span class="title" title="${esc(g.title||'')}">${esc(g.title||repoBit)}</span>
+          <span class="count">${esc(repoBit)} · ${n} SA</span>
+        </div>
+        <div class="map-fleet-lanes">${lanes}</div>
+      </div>`
+    }).join('')
+  }
   root.querySelectorAll('.lane').forEach(el=>el.addEventListener('click',e=>{
     if(e.target.closest('.mf-lane-close, .mission-float .x')) return
     e.stopPropagation()
@@ -1907,7 +2010,6 @@ function renderLanes(){
       e.stopPropagation()
       missionFloatOpen = false
       renderMissionFloat()
-      // hide without full re-render so pan/zoom stays put
       document.querySelectorAll('.lane-mission').forEach(n=>{ n.hidden = true })
     })
   })
@@ -2294,8 +2396,8 @@ function renderLedges(){
   if(sub){
     const openN = sessions.reduce((a,s)=>a+oq(s).length,0)
     sub.innerHTML = openN
-      ? `<b>ORCH desk</b> — ${openN} question${openN===1?'':'s'} on behalf of sub-agents`
-      : `<b>ORCH desk</b> — questions on behalf of sub-agents (SA-N = Chat N)`
+      ? `<b>ORCH desk</b> — ${openN} hold${openN===1?'':'s'} (SA asked you via ORCH)`
+      : `<b>ORCH desk</b> — you tell SA via Steer · answer only when SA is holding`
   }
   if(!sessions.length){ root.innerHTML=''; return }
   root.innerHTML=sessions.map(s=>{
@@ -2312,64 +2414,86 @@ function renderLedges(){
     const qhtml=(s.questions||[]).map(q=>{
       const topic = orchTopicFor(s, q)
       const open = q.status==='open'
+      // Only real SA→operator holds show as ORCH HOLD. (Operator steers never create questions.)
       return `<div class="qcard ${open?'open':''}">
-        <div class="orch-from">ORCH asks · on behalf of ${esc(sa)} · Chat ${chatN}</div>
-        <div class="orch-topic">Topic: ${esc(topic)}${s.repoId?` · ${esc(s.repoId)}`:''}</div>
+        <div class="orch-from">${open?'SA needs you · via ORCH':'Closed'} · ${esc(sa)} · Chat ${chatN}</div>
+        <div class="orch-topic">Work topic: ${esc(topic)}${s.repoId?` · ${esc(s.repoId)}`:''}</div>
         <div class="orch-q">${esc(q.text)}</div>
         ${open?`
           <div class="chips">${(q.chips||['Yes','No']).map(c=>`<button type="button" data-a="${esc(c)}" data-q="${q.id}" data-s="${s.sessionId}">${esc(c)}</button>`).join('')}</div>
           <div class="compose">
-            <input data-in="${q.id}" placeholder="Reply to ORCH (for ${esc(sa)})…"/>
-            <button type="button" data-send="${q.id}" data-s="${s.sessionId}">Reply ORCH</button>
+            <input data-in="${q.id}" placeholder="Your answer for ${esc(sa)}…"/>
+            <button type="button" data-send="${q.id}" data-s="${s.sessionId}">Answer SA</button>
           </div>
-        `:`<div class="ok">✓ ORCH relayed: ${esc(q.answer||'answered')}</div>`}
+        `:`<div class="ok">✓ You answered: ${esc(q.answer||'answered')}</div>`}
       </div>`
-    }).join('')||`<div style="color:var(--muted)">No questions — ORCH has nothing open for ${esc(sa)}</div>`
+    }).join('')||`<div style="color:var(--muted)">No open holds — ${esc(sa)} is not waiting on you</div>`
     const holdBanner = qs.length
       ? `<div class="qcard open" style="margin-bottom:8px">
-          <div class="orch-from">ORCH HOLD</div>
-          <div class="orch-q">Orchestrator is asking you <b>on behalf of ${esc(sa)}</b> (Chat ${chatN}).</div>
-          <div class="orch-topic" style="margin-top:4px">You answer ORCH · ORCH tells ${esc(sa)} · topic: ${esc(topicDefault)}</div>
+          <div class="orch-from">ORCH HOLD · SA asked you</div>
+          <div class="orch-q"><b>${esc(sa)}</b> (Chat ${chatN}) needs a decision before it continues.</div>
+          <div class="orch-topic" style="margin-top:4px">Answer below · this is NOT where you say “hurry up” (use Tell SA)</div>
         </div>`
       : ''
+    // Operator → SA (default). Never POST /questions from this box — that inverted "Hurry up" into a hold.
+    const tellSa = `<div class="compose" style="margin-top:8px;flex-wrap:wrap;gap:6px">
+          <input id="tell-${s.sessionId}" placeholder="You → SA: e.g. Hurry up / focus SC-02 / skip flaky test…" style="flex:1;min-width:140px"/>
+          <button type="button" data-tell-steer="${s.sessionId}" title="Queue for next worker turn">Tell SA</button>
+          <button type="button" class="ghost" data-tell-nudge="${s.sessionId}" title="Reconnect / wake runner">Nudge</button>
+        </div>
+        <div style="font-size:9px;color:var(--muted);margin-top:4px">Tell SA = steer (operator command). Answer SA = only when a hold card is open above.</div>`
     return `<div class="ledge ${qs.length?'qflash':''}" data-sa="${esc(sa)}" data-id="${s.sessionId}">
       <div class="ledge-h">
         <div class="t">
-          <span class="orch-tag">ORCH → SUB-AGENT</span>
+          <span class="orch-tag">YOU → ORCH → ${esc(sa)}</span>
           <span class="sa-line">${esc(sa)} · Chat ${chatN} · ${esc(repoLabel(s))}</span>
-          <div class="topic">Topic: ${esc(topicDefault)}</div>
+          <div class="topic">Work: ${esc(topicDefault)}</div>
         </div>
         <div class="t2">
           <button type="button" class="${tab==='notes'?'on':''}" data-t="notes" data-id="${s.sessionId}">NOTES</button>
-          <button type="button" class="${tab==='questions'?'on':''}" data-t="questions" data-id="${s.sessionId}">Q${qs.length?' ·'+qs.length:''}</button>
+          <button type="button" class="${tab==='questions'?'on':''}" data-t="questions" data-id="${s.sessionId}">HOLD${qs.length?' ·'+qs.length:''}</button>
         </div>
       </div>
       <div class="ledge-body">
+        ${tellSa}
         ${holdBanner}
         ${tab==='notes'?notes:qhtml}
-        ${tab==='questions'?`<div class="compose" style="margin-top:8px">
-          <input id="nq-${s.sessionId}" placeholder="ORCH: ask operator about ${esc(sa)} / topic…"/>
-          <button type="button" data-nq="${s.sessionId}">ORCH ask</button>
-        </div>`:''}
       </div>
     </div>`
   }).join('')
   root.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{ledgeTab[b.dataset.id]=b.dataset.t;renderLedges()})
   root.querySelectorAll('[data-a]').forEach(b=>b.onclick=async()=>{
-    await fetch(`/api/sessions/${b.dataset.s}/questions`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({questionId:b.dataset.q,answer:b.dataset.a})})
+    await fetchLive(`/api/sessions/${b.dataset.s}/questions`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({questionId:b.dataset.q,answer:b.dataset.a})})
     refresh()
   })
   root.querySelectorAll('[data-send]').forEach(b=>b.onclick=async()=>{
     const inp=root.querySelector(`input[data-in="${b.dataset.send}"]`)
     const answer=(inp?.value||'').trim(); if(!answer) return
-    await fetch(`/api/sessions/${b.dataset.s}/questions`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({questionId:b.dataset.send,answer})})
+    await fetchLive(`/api/sessions/${b.dataset.s}/questions`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({questionId:b.dataset.send,answer})})
     refresh()
   })
-  root.querySelectorAll('[data-nq]').forEach(b=>b.onclick=async()=>{
-    const text=($('nq-'+b.dataset.nq)?.value||'').trim(); if(!text) return
-    // Operator-originated: still stored on the sub-agent lane, framed as ORCH ask
-    await fetch(`/api/sessions/${b.dataset.nq}/questions`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})
-    dockOpen=true; applyChrome(); refresh()
+  // Tell SA = steer (never creates ORCH HOLD)
+  root.querySelectorAll('[data-tell-steer]').forEach(b=>b.onclick=async()=>{
+    const sid=b.dataset.tellSteer
+    const text=($('tell-'+sid)?.value||'').trim(); if(!text) return
+    const ts=sessions.find(x=>x.sessionId===sid)
+    await fetchLive(`/api/sessions/${sid}/steers`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,target:ts?.slice?.id})})
+    await fetchLive(`/api/sessions/${sid}/notes`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:`OPERATOR → SA: ${text}`,from:'operator'})})
+    const inp=$('tell-'+sid); if(inp) inp.value=''
+    toast('Told SA', `${saBadge(ts)||sid}: ${text.slice(0,48)}`)
+    refresh()
+  })
+  root.querySelectorAll('[data-tell-nudge]').forEach(b=>b.onclick=async()=>{
+    const sid=b.dataset.tellNudge
+    const text=($('tell-'+sid)?.value||'').trim()
+    if(text){
+      const ts=sessions.find(x=>x.sessionId===sid)
+      await fetchLive(`/api/sessions/${sid}/steers`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,target:ts?.slice?.id})})
+    }
+    await fetchLive(`/api/sessions/${sid}/nudge`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({listenSec:30})})
+    const inp=$('tell-'+sid); if(inp) inp.value=''
+    toast('Nudged SA', sid)
+    refresh()
   })
 }
 
@@ -2693,6 +2817,32 @@ function legsShouldRun(s){
   if(s?.isWorkerOwner === false) return false
   if(s?.corpse) return false
   return sessionHasWorker(s) && !isWorkerIdle(s)
+}
+/**
+ * Shared MAP/CLAW honesty — keep in sync with scripts/lane-honesty.mjs
+ * kind: owner-coding | owner-idle | projector | corpse | unarmed
+ */
+function laneHonesty(s){
+  if(!s){
+    return { kind:'unarmed', showPac:false, showGhost:false, coding:false, dim:true, pacCalm:true, label:'empty', metaHint:'' }
+  }
+  if(s.corpse && !s.ledgerProjector){
+    return { kind:'corpse', showPac:false, showGhost:true, coding:false, dim:true, pacCalm:true, label:'DEAD', metaHint:'DEAD' }
+  }
+  if(s.ledgerProjector || s.isWorkerOwner === false){
+    return { kind:'projector', showPac:true, showGhost:false, coding:false, dim:false, pacCalm:true, label:'LEDGER', metaHint:'LEDGER' }
+  }
+  const alive = s.pidAlive === true || s.workerAlive === true
+  if(!alive){
+    return { kind:'unarmed', showPac:true, showGhost:true, coding:false, dim:true, pacCalm:true, label:'on board · not armed', metaHint:'BOARD' }
+  }
+  if(!isWorkerIdle(s) && sessionHasWorker(s)){
+    return { kind:'owner-coding', showPac:true, showGhost:false, coding:true, dim:false, pacCalm:false, label:'coding', metaHint:'CODING' }
+  }
+  if(sessionHasWorker(s)){
+    return { kind:'owner-idle', showPac:true, showGhost:false, coding:false, dim:false, pacCalm:true, label:'armed · idle', metaHint:'IDLE' }
+  }
+  return { kind:'unarmed', showPac:true, showGhost:true, coding:false, dim:true, pacCalm:true, label:'on board · not armed', metaHint:'BOARD' }
 }
 /**
  * Where the single column invader goes + how it looks.
@@ -3746,15 +3896,87 @@ function renderList(){
   armNudgeTick()
 }
 
+/** True when the operator is mid-type in the ORCH desk / steers (do not wipe DOM). */
+function isTypingInDock(){
+  const el = document.activeElement
+  if(!el) return false
+  const tag = (el.tagName||'').toUpperCase()
+  if(tag!=='INPUT' && tag!=='TEXTAREA' && !el.isContentEditable) return false
+  return !!(
+    el.closest('#ledges') ||
+    el.closest('#dock') ||
+    el.closest('.dock') ||
+    el.closest('#ops') ||
+    el.id==='steer-text' ||
+    (el.id && String(el.id).startsWith('tell-')) ||
+    (el.id && String(el.id).startsWith('nq-')) ||
+    el.getAttribute('data-in')
+  )
+}
+
+/** Preserve draft text across full re-renders (auto poll + SSE). */
+function captureDockDrafts(){
+  const out = { focus:null, values:{} }
+  const ae = document.activeElement
+  if(ae && ((ae.tagName||'').toUpperCase()==='INPUT' || (ae.tagName||'').toUpperCase()==='TEXTAREA')){
+    if(isTypingInDock() || ae.id==='steer-text' || (ae.id&&String(ae.id).startsWith('tell-'))){
+      out.focus = {
+        id: ae.id||'',
+        dataIn: ae.getAttribute('data-in')||'',
+        start: ae.selectionStart,
+        end: ae.selectionEnd,
+      }
+    }
+  }
+  document.querySelectorAll('#ledges input, #ledges textarea, #steer-text, #ops textarea, #ops input').forEach(inp=>{
+    const key = inp.id
+      ? 'id:'+inp.id
+      : (inp.getAttribute('data-in') ? 'in:'+inp.getAttribute('data-in') : '')
+    if(!key) return
+    if(inp.value) out.values[key] = inp.value
+  })
+  return out
+}
+
+function restoreDockDrafts(drafts){
+  if(!drafts || !drafts.values) return
+  for(const [key, val] of Object.entries(drafts.values)){
+    let el = null
+    if(key.startsWith('id:')) el = document.getElementById(key.slice(3))
+    else if(key.startsWith('in:')) el = document.querySelector(`#ledges input[data-in="${CSS.escape?CSS.escape(key.slice(3)):key.slice(3)}"]`)
+    if(el && typeof val==='string') el.value = val
+  }
+  const f = drafts.focus
+  if(!f) return
+  let el = f.id ? document.getElementById(f.id) : null
+  if(!el && f.dataIn) el = document.querySelector(`#ledges input[data-in="${f.dataIn}"]`)
+  if(!el) return
+  try{
+    el.focus({ preventScroll:true })
+    if(typeof f.start==='number' && typeof el.setSelectionRange==='function'){
+      el.setSelectionRange(f.start, typeof f.end==='number'?f.end:f.start)
+    }
+  }catch{}
+}
+
 function render(){
-  renderLeft(); renderLanes(); renderTabs(); renderOps(); renderLedges(); renderNeeds()
-  renderHandovers()
+  const typing = isTypingInDock()
+  const drafts = captureDockDrafts()
+  // Board surfaces always update; dock compose stays put while typing so the
+  // 2s auto poll / SSE cannot steal focus mid-message (Tell SA / Answer / steer).
+  renderLeft(); renderLanes(); renderTabs()
+  if(!typing){
+    renderOps()
+    renderLedges()
+    restoreDockDrafts(drafts)
+  }
+  renderNeeds()
+  if(!typing) renderHandovers()
   if(viewMode==='list') renderList()
   if(viewMode==='claw') renderClaw()
   applyViewMode()
-  renderMissionFloat()
+  if(!typing) renderMissionFloat()
   updateSyncChrome()
-  // First-time MAP/CLAW fit handled in applyViewMode (mode change / once)
 }
 
 function formatSyncTime(d){
@@ -3857,6 +4079,7 @@ function wireLiveStream(){
       try{
         sessions=JSON.parse(ev.data)||[]
         markSynced('live', true)
+        // Soft: still render board, but isTypingInDock() protects the compose box
         render()
       }catch{}
     })

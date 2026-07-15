@@ -88,4 +88,20 @@ assert.ok(g2.every((g) => g.sessions.every((s) => {
 assert.equal(classifyFleetRole({ title: 'Looplet Producer', path: 'c:/repos/looplet-producer' }), 'primary')
 assert.equal(classifyFleetRole({ title: 'OTIS LIVE', path: 'c:/looplet/ai-sidebar' }), 'side')
 
+// SC-03: MAP uses same grouping — 2 same root + 1 other → 2 groups (headers)
+const mapGroups = groupSessionsByFleet([a, b, c])
+assert.equal(mapGroups.length, 2, 'MAP: 2 sessions same root + 1 other → 2 fleet sections')
+assert.equal(mapGroups.find(g => /producer/i.test(g.title + g.path))?.sessions.length, 2,
+  'MAP: both producer sessions under one header')
+assert.equal(mapGroups.find(g => /ai-sidebar|otis/i.test(g.title + g.path))?.sessions.length, 1,
+  'MAP: extension alone under side header')
+
+// index.html MAP must call groupSessionsByFleet
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'theater', 'index.html'), 'utf8')
+assert.match(html, /groupSessionsByFleet\s*\(\s*sessions\s*\)/, 'renderLanes uses groupSessionsByFleet')
+assert.match(html, /map-fleet/, 'MAP fleet section CSS/class present')
+
 console.log('ALL OK — test-fleet-group offline green')
