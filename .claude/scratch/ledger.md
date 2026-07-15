@@ -188,6 +188,14 @@ GREEN BAR (re-run @ close):
 - test-showtime.ps1 → failed=0
 
 Board: http://127.0.0.1:8770/ health ok
-Show Time still zero git. Skill pushed to origin when close finishes.
-READY: **yes** — safe to arm from this skill root only.
+Show Time still zero git. Skill pushed: **origin/master @ bdd9ae5** (`docs(ledger): close MAP honesty epic`).
+READY: **yes** — safe to arm from this skill root only. **No pending slices.**
+
+GREEN BAR (re-verified @ 2026-07-15 close):
+- node --check scripts/theater-server.mjs → PASS
+- node scripts/test-worker-ownership.mjs → ALL OK
+- node scripts/test-legs-honesty.mjs → ALL OK
+- node scripts/test-fleet-group.mjs → ALL OK
+- prove-approve-arm-offline.ps1 → READY_CHECK=green assertions_failed=0
+- test-showtime.ps1 → failed=0
 
