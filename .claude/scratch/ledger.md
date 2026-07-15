@@ -165,3 +165,29 @@ Commit: e2efa7b
 - [blocked] if MAP redesign would require a full rewrite — split further, don't freeze mid-render
 - Never arm ai-sidebar main for this epic
 - Never claim git push from Show Time
+
+---
+
+## EPIC COMPLETE @ 2026-07-15 (final close)
+
+All slices SC-01..SC-08 **[done]**.
+
+Post-ledger board fixes (same skill repo, master):
+- stable board token + join popup re-auth
+- OS join popup Approve script-scope + WebRequest re-auth
+- kill rv2b* join-alarm spam; ORCH repo label
+- live-pid wipe ban + smart rematerialize (never blank board)
+- test-showtime preflight assertions aligned with live-pid ban
+
+GREEN BAR (re-run @ close):
+- node --check scripts/theater-server.mjs → PASS
+- node scripts/test-worker-ownership.mjs → ALL OK
+- node scripts/test-legs-honesty.mjs → ALL OK
+- node scripts/test-fleet-group.mjs → ALL OK
+- prove-approve-arm-offline.ps1 → READY_CHECK=green assertions_failed=0
+- test-showtime.ps1 → failed=0
+
+Board: http://127.0.0.1:8770/ health ok
+Show Time still zero git. Skill pushed to origin when close finishes.
+READY: **yes** — safe to arm from this skill root only.
+
