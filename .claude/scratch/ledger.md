@@ -156,7 +156,7 @@ Notes: After SC-07 preferred
   index.html. Green bar re-run all green: node --check + lane-honesty +
   worker-ownership + legs-honesty + fleet-group ALL OK; prove READY_CHECK=green
   assertions_failed=0; test-showtime failed=0.
-Commit: —
+Commit: e2efa7b
 
 ---
 
