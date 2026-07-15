@@ -91,7 +91,7 @@ Notes: Pairs with SC-02 helpers
   h.coding; projector LEDGER badge + calm pac + ledger pellets; unarmed BOARD.
   test-lane-honesty + test-showtime failed=0. prove-approve-arm still red on
   ai-sidebar pointer ledger (pre-existing; SC-06).
-Commit: —
+Commit: 4ad4c3d
 
 ## SC-05 — Nudge/steer/handover smoke on MAP-selected agent  [pending]
 Ensure selecting a MAP lane still targets ORCH desk steers/nudge for that sessionId.
