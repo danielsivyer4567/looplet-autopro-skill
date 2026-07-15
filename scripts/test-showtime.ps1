@@ -246,7 +246,9 @@ try {
   $pre = Invoke-RestMethod -Method POST -Uri "$base/api/preflight" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
     ledgerHash = 'new-hash'; ledgerTitle = 'new ledger'; staleAfterMs = 3600000
   } | ConvertTo-Json)
-  if (@($pre.kept) | Where-Object { $_.sessionId -eq $sd -and $_.why -eq 'different-ledger-active' }) {
+  # Live PID hard-rule: foreign ledger with alive runner is kept as live-different-ledger
+  # (never wiped — empty board is worse than a twin card).
+  if (@($pre.kept) | Where-Object { $_.sessionId -eq $sd -and $_.why -in @('live-different-ledger', 'different-ledger-active', 'live-pid') }) {
     Ok 'preflight keeps active different-ledger session'
   } else {
     Bad 'preflight kept active session'
@@ -263,10 +265,12 @@ try {
   $staleJson = Get-Content -LiteralPath $staleFile -Raw | ConvertFrom-Json
   $staleJson.updatedAt = (Get-Date).AddMinutes(-10).ToString('o')
   $staleJson | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $staleFile -Encoding utf8
+  # Default multi-ledger board: dead/stale foreign sessions wipe as plain 'stale'.
+  # 'stale-different-ledger' only when killForeignLedgers is explicitly true.
   $pre = Invoke-RestMethod -Method POST -Uri "$base/api/preflight" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
     ledgerHash = 'new-hash'; ledgerTitle = 'new ledger'; staleAfterMs = 1000
   } | ConvertTo-Json)
-  if (@($pre.wiped) | Where-Object { $_.sessionId -eq $stale -and $_.why -eq 'stale-different-ledger' }) {
+  if (@($pre.wiped) | Where-Object { $_.sessionId -eq $stale -and $_.why -in @('stale', 'stale-different-ledger') }) {
     Ok 'preflight wipes stale different-ledger session'
   } else {
     Bad 'preflight stale wipe'
