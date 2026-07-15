@@ -37,6 +37,8 @@ ok(/joinId:\s*jr\.id/.test(server), 'payload includes joinId')
 ok(/repoId:\s*jr\.repoId/.test(server), 'payload includes repoId')
 ok(/boardUrl:/.test(server), 'payload includes boardUrl')
 ok(/APPROVE or DENY on the popup/.test(server), 'body tells operator about popup buttons')
+ok(/isSilentJoin|silent_test_join|showtime-test-repos/.test(server), 'server silences test-showtime join alarms')
+ok(/JOIN_OS_ALERT_COOLDOWN|lastJoinOsAlertAt|cooldown/.test(server), 'server rate-limits OS join alarms')
 
 ok(/data-act="approve"/.test(html) && /data-act="deny"/.test(html), 'board join-gate has approve/deny')
 ok(/APPROVE<\/button>/.test(html) && /DENY<\/button>/.test(html), 'board buttons are big APPROVE/DENY labels')

@@ -605,6 +605,17 @@ function launchAlarmProcess() {
 function fireJoinOsAlertForLedger(jr) {
   if (process.platform !== 'win32') return { fired: false, reason: 'not_win32' }
   if (!jr) return { fired: false, reason: 'no_request' }
+  // NEVER ding operator for offline test-showtime temp fleets (rv2b* spam)
+  if (isSilentJoin(jr)) {
+    try {
+      fs.appendFileSync(
+        JOIN_ALERT_LOG,
+        `${new Date().toISOString()} skip silent/test join session=${jr.sessionId || ''} repo=${jr.repoPath || jr.repoId || ''}\n`,
+        'utf8',
+      )
+    } catch { /* ignore */ }
+    return { fired: false, reason: 'silent_test_join' }
+  }
   loadJoinAlertedLedgers()
   const ledgerKey = joinLedgerAlarmKey(jr)
   if (!ledgerKey) return { fired: false, reason: 'no_ledger_key' }
@@ -618,6 +629,19 @@ function fireJoinOsAlertForLedger(jr) {
     } catch { /* ignore */ }
     return { fired: false, reason: 'already_alerted', ledgerKey }
   }
+  // Global cooldown — one popup/sound burst max every 45s even across real fleets
+  const nowMs = Date.now()
+  if (nowMs - lastJoinOsAlertAt < JOIN_OS_ALERT_COOLDOWN_MS) {
+    try {
+      fs.appendFileSync(
+        JOIN_ALERT_LOG,
+        `${new Date().toISOString()} skip cooldown ledger=${ledgerKey} waitMs=${JOIN_OS_ALERT_COOLDOWN_MS - (nowMs - lastJoinOsAlertAt)}\n`,
+        'utf8',
+      )
+    } catch { /* ignore */ }
+    return { fired: false, reason: 'cooldown', ledgerKey }
+  }
+  lastJoinOsAlertAt = nowMs
   joinAlertedLedgers.add(ledgerKey)
   persistJoinAlertedLedgers()
 
@@ -952,10 +976,16 @@ function createJoinRequest(body = {}) {
 // ---------------------------------------------------------------------------
 const ARM_ON_APPROVE_PS1 = path.join(SKILL_ROOT, 'scripts', 'arm-on-approve.ps1')
 const ARM_BRIDGE_LOG = path.join(STATE_ROOT, 'arm-on-approve-bridge.log')
-const JUNK_SESSION_RE = /^(sound-test|alert-test|LOUD-|HEAR-ME|BLAST-|SOUND|alarm|prove-grok)/i
+const JUNK_SESSION_RE = /^(sound-test|alert-test|LOUD-|HEAR-ME|BLAST-|SOUND|alarm|prove-grok|v2a_|v2b_|v2d_|v2old_|v2done_|sess_armproof_|sess_demo_)/i
 const JUNK_TITLE_RE = /(SOUND TEST|LOUD ALARM|HEAR THIS|BLAST SOUND|TEST LOUD JOIN|alarm proof)/i
+/** Offline suite / temp joins — must never ding the operator's desktop */
+const TEST_JOIN_PATH_RE = /showtime-test-repos|[\\/]temp[\\/].*showtime|appdata[\\/]local[\\/]temp[\\/]showtime/i
+const TEST_LEDGER_HASH_RE = /^(hash-a|old-hash|hash-complete|demo-popup)/i
 /** repoPath → last arm attempt ms (debounce double-approve) */
 const armDebounce = new Map()
+/** Global OS join-alarm rate limit (ms). Prevents 10 popups when test suite registers many lanes. */
+let lastJoinOsAlertAt = 0
+const JOIN_OS_ALERT_COOLDOWN_MS = 45_000
 
 function armBridgeLog(line) {
   try {
@@ -1004,6 +1034,22 @@ function isJunkJoin(jr) {
   const title = String(jr.ledgerTitle || '')
   if (JUNK_SESSION_RE.test(sid)) return true
   if (JUNK_TITLE_RE.test(title)) return true
+  return false
+}
+
+/** True when this join is offline-suite noise — API ok, OS popup/sound never. */
+function isSilentJoin(jr) {
+  if (!jr) return true
+  if (isJunkJoin(jr)) return true
+  const sid = String(jr.sessionId || '')
+  const repo = String(jr.repoPath || jr.primaryRepoPath || jr.repoId || '')
+  const hash = String(jr.ledgerHash || '')
+  const title = String(jr.ledgerTitle || '').trim()
+  if (/^(v2a_|v2b_|v2d_|v2old_|v2done_)/i.test(sid)) return true
+  if (TEST_JOIN_PATH_RE.test(repo)) return true
+  if (TEST_LEDGER_HASH_RE.test(hash)) return true
+  if (/^test$/i.test(title) || /^old ledger$/i.test(title) || /^complete ledger$/i.test(title)) return true
+  if (/^r?v2[abd]/i.test(String(jr.repoId || ''))) return true
   return false
 }
 

@@ -3525,9 +3525,18 @@ function renderClaw(){
         ${modelPill}
         <div class="orch-detail">${esc(headNote||`${brand} · ${k.done}/${k.total} slices`)}${modelsInUse.length?` · models: ${esc(modelsInUse.join(', '))}`:''}</div>
       </div>`
+    // Always show repo basename so ORCH is never "MAIN · FINISHING WORK" with no identity
+    const repoBit = (()=>{
+      const s0 = fleetSess[0]
+      const fromLabel = repoLabel(s0)
+      if(fromLabel && fromLabel!=='repo') return fromLabel
+      const p = String(g.path||g.repo||s0?.repoPath||s0?.primaryRepoPath||'').replace(/\\/g,'/')
+      const leaf = p.split('/').filter(Boolean).pop()
+      return leaf || g.repo || brand || 'repo'
+    })()
     const roleTag = g.role==='primary'
-      ? `<div class="fleet-role-tag">MAIN · FINISHING WORK</div>`
-      : `<div class="fleet-role-tag">SIDE · SEPARATE LEDGER</div>`
+      ? `<div class="fleet-role-tag">MAIN · ${esc(String(repoBit).slice(0,28))} · FINISHING</div>`
+      : `<div class="fleet-role-tag">SIDE · ${esc(String(repoBit).slice(0,28))}</div>`
     // Arm / live-worker honesty strip (Door B status)
     const armBits = workersIn(fleetSess).map(s=>{
       const st = s.armStatus || (sessionHasWorker(s)?'armed':'board_only')
@@ -4618,6 +4627,21 @@ function joinLedgerKeyClient(r){
   return r.id ? 'join:'+r.id : ''
 }
 
+/** Client-side silent joins (match server isSilentJoin) — no ding for test-showtime noise */
+function isSilentJoinClient(r){
+  if(!r) return true
+  const sid = String(r.sessionId||'')
+  const repo = String(r.repoPath||r.repoId||'')
+  const hash = String(r.ledgerHash||'')
+  const title = String(r.ledgerTitle||'').trim()
+  if(/^(sound-test|alert-test|LOUD-|v2a_|v2b_|v2d_|v2old_|v2done_|sess_armproof_|sess_demo_)/i.test(sid)) return true
+  if(/showtime-test-repos|[\\/]temp[\\/].*showtime|AppData[\\/]Local[\\/]Temp[\\/]showtime/i.test(repo)) return true
+  if(/^(hash-a|old-hash|hash-complete|demo-popup)/i.test(hash)) return true
+  if(/^test$/i.test(title) || /^old ledger$/i.test(title) || /^complete ledger$/i.test(title)) return true
+  if(/^r?v2[abd]/i.test(String(r.repoId||''))) return true
+  return false
+}
+
 function armJoinAttention(pending){
   if(!pending.length){
     stopJoinAlarmAudio()
@@ -4625,11 +4649,18 @@ function armJoinAttention(pending){
     // Keep joinAlertedLedgerKeys so the same ledger never re-dings this tab
     return
   }
+  // Filter offline-suite junk so board join-gate + browser toast don't spam
+  const real = pending.filter(r=>!isSilentJoinClient(r))
   const ids = new Set(pending.map(r=>r.id))
-  const newJoins = pending.filter(r=>!joinKnownPending.has(r.id))
+  const newJoins = real.filter(r=>!joinKnownPending.has(r.id))
   joinKnownPending = ids
-  flashJoinTitle(pending.length)
-  // Only sound for a ledger we have never alerted in this tab
+  if(!real.length){
+    // Pending only junk — hide title flash noise
+    stopJoinAlarmAudio()
+    return
+  }
+  flashJoinTitle(real.length)
+  // Only sound for a real ledger we have never alerted in this tab
   const brandNewLedger = newJoins.find(r=>{
     const k = joinLedgerKeyClient(r)
     return k && !joinAlertedLedgerKeys.has(k)
@@ -4680,9 +4711,17 @@ async function loadJoinRequests(){
     }
     box.hidden = false
     box.style.display = 'block'
-    if(cnt) cnt.textContent = pending.length + ' waiting'
+    // Only surface real fleets on the join gate (hide test-showtime rv2b* noise)
+    const realPending = pending.filter(r=>!isSilentJoinClient(r))
     armJoinAttention(pending)
-    list.innerHTML = pending.map(r=>{
+    if(!realPending.length){
+      box.hidden = true
+      box.style.display = 'none'
+      list.innerHTML = ''
+      return
+    }
+    if(cnt) cnt.textContent = realPending.length + ' waiting'
+    list.innerHTML = realPending.map(r=>{
       const repo = r.repoId || (String(r.repoPath||'').replace(/\\/g,'/').split('/').filter(Boolean).slice(-1)[0]) || '?'
       const pathHint = r.repoPath ? String(r.repoPath).replace(/\\/g,'/') : ''
       return `
