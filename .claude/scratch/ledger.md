@@ -103,7 +103,7 @@ Notes: Do not invent cross-repo git push
   2026-07-15: MAP click setSelectedAgent(sessionId); selectedId wins over stale
   picker; .lane.sel + scroll ledge; CLAW branch same. test-map-select-nudge +
   showtime notes inbox + UI MAP→ORCH wire green.
-Commit: —
+Commit: 732d60d
 
 ## SC-06 — Prove offline suite still green after MAP edits  [pending]
 Run full bar: prove-approve-arm-offline + test-showtime.
