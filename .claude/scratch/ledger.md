@@ -138,7 +138,7 @@ Notes: FIRST arm of this epic — feature branch preferred if dirty; skill is al
   theater-server OK; test-worker-ownership ALL OK; test-legs-honesty ALL OK;
   test-fleet-group ALL OK; prove-approve-arm-offline READY_CHECK=green
   assertions_failed=0; test-showtime failed=0. Human CLAW/MAP watch = operator gate.
-Commit: —
+Commit: a2413cf
 
 ## SC-08 — Handover + skill pointer for MAP honesty  [pending]
 Update SHOWTIME-HANDOVER.md + one line in SKILL.md: MAP uses same honesty as CLAW;
