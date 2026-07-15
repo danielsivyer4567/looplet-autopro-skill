@@ -1164,19 +1164,36 @@ function scheduleArmResultPoll(sessionId, repoDir, attempt) {
       let pid = 0
       let runnerSessionId = ''
       if (fs.existsSync(logPath)) {
-        const tail = fs.readFileSync(logPath, 'utf8').split(/\r?\n/).slice(-80).join('\n')
-        if (/ARM_STATUS=armed|SUCCESS armed/i.test(tail)) status = 'armed'
-        if (/ARM_STATUS=already_armed/i.test(tail)) status = 'already_armed'
-        if (/ARM_STATUS=skipped/i.test(tail)) status = 'skipped'
-        if (/ARM_STATUS=failed/i.test(tail)) status = 'failed'
-        if (/ARM_STATUS=whatif_ok/i.test(tail)) status = 'whatif_ok'
-        const m = tail.match(/ARM_PID=(\d+)/) || tail.match(/SUCCESS armed pid=(\d+)/) || tail.match(/RUNNER_PID=(\d+)/)
-        if (m) pid = Number(m[1]) || 0
-        const sm =
-          tail.match(/ARM_RUNNER_SESSION=(\S+)/) ||
-          tail.match(/ARM_SESSION=(\S+)/) ||
-          tail.match(/SHOWTIME_SESSION=(\S+)/)
-        if (sm) runnerSessionId = String(sm[1] || '').trim()
+        // Scan last lines bottom-up so a later SUCCESS wins over an earlier ARM_STATUS=failed
+        // (same log file accumulates many arm attempts).
+        const lines = fs.readFileSync(logPath, 'utf8').split(/\r?\n/).slice(-120)
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const line = lines[i]
+          if (!status) {
+            if (/SUCCESS armed|ARM_STATUS=armed\b/i.test(line)) status = 'armed'
+            else if (/ARM_STATUS=already_armed/i.test(line)) status = 'already_armed'
+            else if (/ARM_STATUS=armed_flag_only/i.test(line)) status = 'armed_flag_only'
+            else if (/ARM_STATUS=skipped/i.test(line)) status = 'skipped'
+            else if (/ARM_STATUS=failed/i.test(line)) status = 'failed'
+            else if (/ARM_STATUS=whatif_ok/i.test(line)) status = 'whatif_ok'
+          }
+          if (!pid) {
+            const m =
+              line.match(/SUCCESS armed pid=(\d+)/i) ||
+              line.match(/ARM_PID=(\d+)/) ||
+              line.match(/RUNNER_PID=(\d+)/)
+            if (m) pid = Number(m[1]) || 0
+          }
+          if (!runnerSessionId) {
+            const sm =
+              line.match(/SUCCESS armed pid=\d+ session=(\S+)/i) ||
+              line.match(/ARM_RUNNER_SESSION=(\S+)/) ||
+              line.match(/ARM_SESSION=(\S+)/) ||
+              line.match(/SHOWTIME_SESSION=(\S+)/)
+            if (sm) runnerSessionId = String(sm[1] || '').trim()
+          }
+          if (status && pid && runnerSessionId) break
+        }
       }
       // Also detect live runner / flags without log parse
       try {

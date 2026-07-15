@@ -181,7 +181,15 @@ if ($ForceModelOnly) { $launchArgs += '-AllowModelOnlyFinalCheck' }
 
 function Invoke-Launch([string[]]$la) {
   Log ("launch> pwsh " + ($la -join ' '))
-  $out = & pwsh.exe @la 2>&1 | ForEach-Object { "$_" }
+  # Native non-zero exit must NOT abort the arm bridge — first attempt often
+  # fails on "no independent final-check" and we retry with -AllowModelOnlyFinalCheck.
+  $prevNative = $PSNativeCommandUseErrorActionPreference
+  $PSNativeCommandUseErrorActionPreference = $false
+  try {
+    $out = & pwsh.exe @la 2>&1 | ForEach-Object { "$_" }
+  } finally {
+    $PSNativeCommandUseErrorActionPreference = $prevNative
+  }
   foreach ($line in $out) { Log "launch: $line"; Write-Output $line }
   return @($out)
 }
@@ -222,28 +230,52 @@ function Resolve-ArmResult([string[]]$out) {
   return $false
 }
 
+function Write-ArmStatus([string]$status, [string]$reason = '') {
+  # Mirror to log so theater scheduleArmResultPoll can see ARM_STATUS=* (stdout alone is not enough)
+  Log ("ARM_STATUS=$status" + $(if ($reason) { " ARM_REASON=$reason" } else { '' }))
+  Write-Output ("ARM_STATUS={0}" -f $status)
+  if ($reason) { Write-Output ("ARM_REASON={0}" -f $reason) }
+}
+
 try {
   $out = Invoke-Launch $launchArgs
   if (Resolve-ArmResult $out) { exit 0 }
 
   Log 'FAIL launch finished but no runner/flag — retry with AllowModelOnlyFinalCheck'
-  $retryArgs = $launchArgs + @('-AllowModelOnlyFinalCheck')
-  $out2 = Invoke-Launch $retryArgs
-  if (Resolve-ArmResult $out2) {
-    Write-Output 'ARM_NOTE=model_only_fallback'
-    exit 0
+  $retryArgs = @($launchArgs) + @('-AllowModelOnlyFinalCheck')
+  # Avoid double-adding if already forced
+  if ($launchArgs -notcontains '-AllowModelOnlyFinalCheck') {
+    $out2 = Invoke-Launch $retryArgs
+    if (Resolve-ArmResult $out2) {
+      Write-Output 'ARM_NOTE=model_only_fallback'
+      Log 'ARM_NOTE=model_only_fallback'
+      exit 0
+    }
   }
 
   Log 'FAIL both launch attempts'
-  Write-Output 'ARM_STATUS=failed'
-  Write-Output 'ARM_REASON=no_runner_after_launch'
+  Write-ArmStatus 'failed' 'no_runner_after_launch'
   exit 3
 } catch {
   $msg = [string]$_.Exception.Message
   Log ("FAIL launch exception: " + $msg)
-  Write-Output 'ARM_STATUS=failed'
+  # First attempt can throw (final-check gate) — still try model-only once
+  if ($launchArgs -notcontains '-AllowModelOnlyFinalCheck') {
+    try {
+      Log 'RETRY after exception with AllowModelOnlyFinalCheck'
+      $retryArgs = @($launchArgs) + @('-AllowModelOnlyFinalCheck')
+      $out2 = Invoke-Launch $retryArgs
+      if (Resolve-ArmResult $out2) {
+        Write-Output 'ARM_NOTE=model_only_fallback_after_exception'
+        Log 'ARM_NOTE=model_only_fallback_after_exception'
+        exit 0
+      }
+    } catch {
+      Log ("RETRY also failed: " + $_.Exception.Message)
+    }
+  }
   $short = ($msg -replace '\s+', ' ')
   if ($short.Length -gt 200) { $short = $short.Substring(0, 200) }
-  Write-Output ("ARM_REASON={0}" -f $short)
+  Write-ArmStatus 'failed' $short
   exit 3
 }
