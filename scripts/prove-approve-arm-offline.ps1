@@ -99,7 +99,7 @@ if (Test-Path -LiteralPath $contract) {
   Note-Fail "APPROVE-ARM-CONTRACT.md missing at $contract"
 }
 
-# --- 4) server source string scan: purgeJunk + tryAutoArm ---
+# --- 4) server source string scan: purgeJunk + tryAutoArm + ownership + purge-dead ---
 if (Test-Path -LiteralPath $server) {
   $src = Get-Content -LiteralPath $server -Raw
   if ($src -match 'purgeJunk') {
@@ -112,6 +112,42 @@ if (Test-Path -LiteralPath $server) {
   } else {
     Note-Fail 'theater-server.mjs missing tryAutoArm (string scan)'
   }
+  if ($src -match 'listSessionsEnriched|applyOwnership') {
+    Note-Ok 'theater-server.mjs has single-writer ownership enrich'
+  } else {
+    Note-Fail 'theater-server.mjs missing listSessionsEnriched/applyOwnership'
+  }
+  if ($src -match 'purgeDeadSessions|/api/purge-dead') {
+    Note-Ok 'theater-server.mjs has purge-dead'
+  } else {
+    Note-Fail 'theater-server.mjs missing purge-dead'
+  }
+}
+
+# --- 4b) worker-ownership unit test ---
+$ownTest = Join-Path $skillRoot 'scripts\test-worker-ownership.mjs'
+if (Test-Path -LiteralPath $ownTest) {
+  & node $ownTest 2>&1 | Out-Host
+  if ($LASTEXITCODE -eq 0) { Note-Ok 'test-worker-ownership.mjs exit 0' }
+  else { Note-Fail "test-worker-ownership.mjs exit $LASTEXITCODE" }
+} else {
+  Note-Fail 'test-worker-ownership.mjs missing'
+}
+
+# --- 4c) legs honesty offline ---
+$legsTest = Join-Path $skillRoot 'scripts\test-legs-honesty.mjs'
+if (Test-Path -LiteralPath $legsTest) {
+  & node $legsTest 2>&1 | Out-Host
+  if ($LASTEXITCODE -eq 0) { Note-Ok 'test-legs-honesty.mjs exit 0' }
+  else { Note-Fail "test-legs-honesty.mjs exit $LASTEXITCODE" }
+}
+
+# --- 4d) fleet-group offline ---
+$fleetTest = Join-Path $skillRoot 'scripts\test-fleet-group.mjs'
+if (Test-Path -LiteralPath $fleetTest) {
+  & node $fleetTest 2>&1 | Out-Host
+  if ($LASTEXITCODE -eq 0) { Note-Ok 'test-fleet-group.mjs exit 0' }
+  else { Note-Fail "test-fleet-group.mjs exit $LASTEXITCODE" }
 }
 
 # --- 5) READY_CHECK ---

@@ -407,7 +407,13 @@ function Parse-WorkerUsageFromText {
   # Try whole-text JSON first
   try {
     $j = $clean | ConvertFrom-Json -ErrorAction Stop
-    if ($j) { [void]$nodes.Add($j) }
+    if ($j) {
+      # ConvertFrom-Json returns Object[] for a top-level JSON array. Adding the
+      # array as one node makes fields such as total_cost_usd become Object[],
+      # which later cannot be converted to a scalar Double. Flatten only the
+      # top-level result; individual event objects remain intact.
+      foreach ($item in @($j)) { if ($item) { [void]$nodes.Add($item) } }
+    }
   } catch {}
 
   # JSONL / multi-object: scan lines
@@ -417,7 +423,7 @@ function Parse-WorkerUsageFromText {
     if ($t[0] -ne '{' -and $t[0] -ne '[') { continue }
     try {
       $node = $t | ConvertFrom-Json -ErrorAction Stop
-      if ($node) { [void]$nodes.Add($node) }
+      foreach ($item in @($node)) { if ($item) { [void]$nodes.Add($item) } }
     } catch {}
   }
 

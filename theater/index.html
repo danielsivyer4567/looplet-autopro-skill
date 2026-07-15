@@ -239,21 +239,43 @@ input,textarea,[contenteditable="true"]{
   background:rgba(94,234,212,.1);color:#5eead4;border:1px solid rgba(94,234,212,.4)
 }
 .claw-head{
-  position:relative;width:var(--orch-w);margin:0 auto 0;text-align:center;z-index:3
+  position:relative;width:var(--orch-w);margin:0 auto 12px;text-align:center;z-index:5
 }
 .claw-head-card{
   display:inline-flex;flex-direction:column;align-items:stretch;gap:6px;
-  width:var(--orch-w);padding:12px 14px 10px;border-radius:16px;border:1.5px solid rgba(251,146,60,.55);
-  background:linear-gradient(180deg,#1c1814,#12141a);box-shadow:0 0 28px rgba(251,146,60,.15);
+  width:var(--orch-w);padding:14px 16px 12px;border-radius:16px;border:2px solid rgba(251,146,60,.7);
+  background:linear-gradient(180deg,#241c14,#12141a);box-shadow:0 0 32px rgba(251,146,60,.28),0 8px 24px rgba(0,0,0,.45);
   text-align:center
 }
-.claw-head-card .ht{font-size:11px;font-weight:900;letter-spacing:.16em;color:#fdba74}
+.claw-head-card .ht{font-size:12px;font-weight:900;letter-spacing:.16em;color:#fdba74}
 .claw-head-card .hs{font-size:10px;color:var(--muted)}
+.claw-head-card .orch-talk{
+  font-size:10px;font-weight:800;letter-spacing:.04em;color:#ffe0a8;
+  background:rgba(251,146,60,.14);border:1px solid rgba(251,146,60,.4);
+  border-radius:8px;padding:6px 10px;line-height:1.35
+}
+.claw-head-card .orch-talk b{color:#fdba74}
 .claw-head-card .hb{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-top:2px}
 .claw-head-card .hb span{
   font-size:9px;font-weight:800;padding:2px 7px;border-radius:999px;
   background:rgba(251,146,60,.12);color:#fdba74;border:1px solid rgba(251,146,60,.25)
 }
+/* Fixed ORCH strip — always visible above the pan/zoom world (sticky fails under transform) */
+.orch-pin-bar{
+  position:absolute;left:0;right:0;top:0;z-index:30;
+  display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;
+  padding:8px 14px;pointer-events:none;
+  background:linear-gradient(180deg,rgba(12,10,8,.96),rgba(12,10,8,.82) 70%,transparent);
+  border-bottom:1px solid rgba(251,146,60,.25)
+}
+.orch-pin-bar .pin-main{
+  pointer-events:auto;font-size:11px;font-weight:900;letter-spacing:.08em;color:#fdba74;
+  padding:6px 14px;border-radius:999px;border:1px solid rgba(251,146,60,.55);
+  background:rgba(28,20,12,.95);box-shadow:0 4px 16px rgba(0,0,0,.4)
+}
+.orch-pin-bar .pin-sub{font-size:10px;color:var(--muted);font-weight:600;max-width:520px;text-align:center}
+.orch-pin-bar .pin-sub b{color:#ffe0a8;font-weight:800}
+.claw-view.on{padding-top:48px} /* room for pin bar */
 /* ORCH desk status strip — not a code-worker glyph */
 .orch-status-row{
   display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;
@@ -315,13 +337,24 @@ input,textarea,[contenteditable="true"]{
 .claw-mission .ms-foot .t{color:var(--cyan)}
 /* head orchestrator: working = slow sway L-R-halt; stagnant = still (bad) */
 .claw-orch{
-  width:auto;min-width:40px;height:auto;min-height:40px;margin:8px auto 0;position:relative;
+  width:auto;min-width:48px;height:auto;min-height:48px;margin:0 auto;position:relative;
   display:flex;flex-direction:column;align-items:center;justify-content:center
 }
-.claw-orch svg{width:52px;height:52px;display:block;overflow:visible;filter:drop-shadow(0 0 10px rgba(251,146,60,.5))}
+.claw-orch svg{width:56px;height:auto;display:block;overflow:visible;filter:drop-shadow(0 0 12px rgba(251,146,60,.65))}
 .claw-orch.working{animation:orch-sway 2.4s ease-in-out infinite}
 .claw-orch.stagnant{animation:none;filter:grayscale(.35);opacity:.8}
 .claw-orch.holding{animation:orch-sway 3.2s ease-in-out infinite}
+/* Slot under Previous notes — THIS is the head ORCH invader */
+.claw-orch-slot{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  margin:6px 0 4px;padding:8px 0 4px;
+  border-top:1px dashed rgba(251,146,60,.3)
+}
+.claw-orch-hold{
+  font-size:10px;font-weight:700;color:#fcd34d;line-height:1.35;text-align:center;
+  margin:4px 4px 2px;padding:6px 8px;border-radius:8px;
+  border:1px solid rgba(251,191,36,.4);background:rgba(251,191,36,.1)
+}
 @keyframes orch-sway{
   0%,100%{transform:translateX(0)}
   20%{transform:translateX(-5px)}
@@ -510,11 +543,12 @@ input,textarea,[contenteditable="true"]{
 }
 .claw-icon svg{width:28px;height:28px;display:block;overflow:visible;shape-rendering:crispEdges}
 .claw-icon .leg-l,.claw-icon .leg-r{transform-origin:50% 20%}
-.claw-icon.running .leg-l{animation:inv-leg-l .32s steps(2) infinite}
-.claw-icon.running .leg-r{animation:inv-leg-r .32s steps(2) infinite}
+.claw-icon.running .leg-l{animation:inv-leg-l .28s steps(2) infinite}
+.claw-icon.running .leg-r{animation:inv-leg-r .28s steps(2) infinite}
 .claw-icon.still{opacity:.72;filter:grayscale(.3) drop-shadow(0 0 2px rgba(224,122,95,.25))}
-@keyframes inv-leg-l{0%,100%{transform:translateY(0)}50%{transform:translateY(1px)}}
-@keyframes inv-leg-r{0%,100%{transform:translateY(1px)}50%{transform:translateY(0)}}
+/* Bigger step so “legs moving = working” is obvious at a glance */
+@keyframes inv-leg-l{0%,100%{transform:translateY(0)}50%{transform:translateY(3px)}}
+@keyframes inv-leg-r{0%,100%{transform:translateY(3px)}50%{transform:translateY(0)}}
 /* Header worker glyph stays put (no orbit) */
 .claw-branch-card .bh .claw-icon.worker-glyph{
   display:flex;flex:none;margin-top:2px;position:relative;animation:none
@@ -573,10 +607,10 @@ input,textarea,[contenteditable="true"]{
   will-change:transform
 }
 .claw-node.live-work .claw-icon.orbit-agent.running .leg-l{
-  animation:inv-leg-l .28s steps(2) infinite
+  animation:inv-leg-l .24s steps(2) infinite
 }
 .claw-node.live-work .claw-icon.orbit-agent.running .leg-r{
-  animation:inv-leg-r .28s steps(2) infinite
+  animation:inv-leg-r .24s steps(2) infinite
 }
 .claw-node .nt{flex:1;min-width:0;position:relative;z-index:3}
 .claw-node .nid.pill{
@@ -1051,6 +1085,7 @@ body.tab-hidden .claw-icon.running .leg-r{animation-play-state:paused}
         <button type="button" id="btn-claw" role="tab" aria-selected="false">🦞 CLAW</button>
       </div>
       <div class="sync-bar" id="sync-bar" title="Connection · busts browser cache (MAP · LIST · CLAW)">
+        <button type="button" id="btn-purge-dead" title="Remove dead/twin corpse lanes (no live pid)" style="font-size:10px;font-weight:800;padding:4px 8px;border-radius:6px;border:1px solid rgba(251,113,133,.45);color:#fda4af;background:rgba(251,113,133,.1);cursor:pointer">Purge dead</button>
         <button type="button" id="btn-sync" aria-label="Force connection and clear browser cache">
           <span class="ico" aria-hidden="true">⟳</span>
           <span>SYNC</span>
@@ -1678,15 +1713,18 @@ function laneMissionHtml(s){
 }
 
 /** Fleet mission rows HTML — shared by LIST bar + CLAW head (named fleet). */
-function fleetMissionRowsHtml(){
-  const m = missionTotals(sessions)
-  const focus = selectedId ? sessions.find(s=>s.sessionId===selectedId) : null
+function fleetMissionRowsHtml(sessList){
+  const list = Array.isArray(sessList) ? sessList : sessions
+  const m = missionTotals(list)
+  const focus = selectedId ? list.find(s=>s.sessionId===selectedId) : null
   const clock = missionClockText()
   const ageTxt = missionAgeText()
-  const brand = fleetBrandName(focus)
+  const brand = fleetBrandName(focus) || fleetBrandBase(list[0]) || 'Fleet'
+  const workers = list.filter(s=>!isOrchSession(s))
+  const saBits = workers.map(s=>saBadge(s)).filter(Boolean).slice(0,6).join(' · ') || '—'
   const who = focus
-    ? `ORCH → ${agentRef(focus)} · ${esc(repoLabel(focus))} · ${esc(brand)} · ${m.n} lane${m.n===1?'':'s'}`
-    : `ORCH · ${esc(brand)} · ${m.n} sub-agent${m.n===1?'':'s'} · ${viewMode.toUpperCase()}`
+    ? `ORCH → ${agentRef(focus)} · ${esc(repoLabel(focus))} · ${esc(brand)}`
+    : `ORCH · ${esc(brand)} · ${workers.length} SA · ${saBits}`
   return `
     <div class="ms-row"><span>Fleet:</span><b class="cyan">${esc(brand)}</b></div>
     <div class="ms-row"><span>Total:</span><b>${m.total} items</b></div>
@@ -1697,19 +1735,20 @@ function fleetMissionRowsHtml(){
     <div class="ms-row"><span>Sub-agents:</span><b class="cyan">${m.completed} done · ${m.workers} active</b></div>
     <div class="ms-row"><span>Talk to:</span><b class="ok">ORCH only</b></div>
     <div class="ms-row"><span>Scope:</span><b>${who}</b></div>
-    <div class="ms-foot"><span class="t mf-clock" id="mf-clock">${esc(clock)}</span><span class="mf-age" id="mf-age">${esc(ageTxt)}${connOk===false?' · conn?':''}</span></div>`
+    <div class="ms-foot"><span class="t mf-clock">${esc(clock)}</span><span class="mf-age">${esc(ageTxt)}${connOk===false?' · conn?':''}</span></div>`
 }
 
-function fleetMissionEmbeddedHtml(){
-  if(!missionFloatOpen) return ''
-  const m = missionTotals(sessions)
+/** Always embed mission inside CLAW ORCH head (not gated on floating panel). */
+function fleetMissionEmbeddedHtml(sessList, headLabel){
+  const list = Array.isArray(sessList) ? sessList : sessions
+  const m = missionTotals(list)
   const bad = connOk===false || m.blocked>0
-  const head = fleetBrandHead()
-  return `<div class="claw-mission" id="claw-mission">
+  const head = headLabel || fleetBrandHead() || 'FLEET'
+  return `<div class="claw-mission">
     <div class="mf-h">
-      <div class="t"><i class="${bad?'bad':''}" id="claw-mf-dot"></i>MISSION STATUS · ${esc(head)}</div>
+      <div class="t"><i class="${bad?'bad':''}"></i>MISSION STATUS · ${esc(String(head).toUpperCase())}</div>
     </div>
-    <div id="claw-mf-rows">${fleetMissionRowsHtml()}</div>
+    <div class="claw-mf-rows">${fleetMissionRowsHtml(list)}</div>
   </div>`
 }
 
@@ -2598,12 +2637,16 @@ function invaderPixelSvg(unit=2, label=''){
 }
 
 /**
- * Worker glyph rules (SC-R04 / APPROVE-ARM contract):
- *   no live worker process  → no icon on SA card
- *   worker live + idle      → stiff icon (no leg march)
- *   worker live + coding    → running legs (pid is coding)
- * Orbit invader on SC rows: always when slice is active; legs ONLY if sessionHasWorker.
- * Rule of thumb: if the legs aren’t moving, it isn’t working.
+ * Worker glyph rules (product — non-negotiable):
+ *
+ * ONE worker per SA vertical column. It works DOWN the SC list.
+ *   - Done SCs: full ring only — NEVER an invader (still legs on done = wrong)
+ *   - Pending SCs: empty — next in line
+ *   - Active SC only: the single invader
+ *       · coding  → legs MOVING
+ *       · hold / clash / issue → stiff + reason (stopped on purpose)
+ *       · no live pid → no invader
+ * Header has NO second invader — that would be two guys for one worker.
  */
 function clawSvg(_running=false, _orbit=false){
   return `<div class="claw-icon still worker-glyph" title="Worker present (idle)">
@@ -2617,38 +2660,76 @@ function clawSvg(_running=false, _orbit=false){
  */
 function sessionHasWorker(s){
   if(!s) return false
+  if(s.corpse) return false
+  // Server single-writer: only the root OWNER may show a live worker
+  if(s.isWorkerOwner === false) return false
   if(s.workerAlive === true || s.pidAlive === true) return true
   if(s.workerAlive === false || s.pidAlive === false) return false
   if(s.workerDead === true) return false
-  // Legacy servers without the field: no icon without a pid, and never invent presence
   return false
 }
-/** Live worker but not mid-slice coding (hold / blocked / quiet / done). */
+/**
+ * Live worker but not mid-slice coding (hold / blocked / quiet / done).
+ * IMPORTANT: ledger slice often stays "pending" while the runner is already
+ * mid-work — a live pid + status=running means CODING (legs move).
+ */
 function isWorkerIdle(s){
   if(!sessionHasWorker(s)) return true
   if(s.slice?.state === 'in-progress') return false
   if((s.counts?.inProgress || 0) > 0) return false
-  const st = String(s.status || '')
-  if(/^(running|in-progress)$/i.test(st) && s.slice?.state === 'in-progress') return false
-  // Alive runner waiting, blocked, stalled, paused, or between slices → idle presence
+  const st = String(s.status || '').toLowerCase()
+  // Explicit hold / issue — not coding (stiff on active SC only)
+  if(/^(blocked|stalled|paused|complete|done|needs_input|queued|idle)$/.test(st)) return true
+  // Live runner spinning (status running) = working — legs MUST move
+  if(st === 'running' || st === 'in-progress') return false
   return true
 }
 /**
- * SC-R04: legs march only when a live pid is coding.
- * status=running alone is never enough (dead runners often keep that flag).
+ * Legs march when a live pid is coding.
+ * Never from status alone without a live pid (dead runners often keep status=running).
  */
 function legsShouldRun(s){
+  // Owner-only + live pid + not idle (server sets isWorkerOwner)
+  if(s?.isWorkerOwner === false) return false
+  if(s?.corpse) return false
   return sessionHasWorker(s) && !isWorkerIdle(s)
 }
-/** SA-card icon HTML: none if dead; stiff if idle; running legs if coding. */
-function workerPresenceIconHtml(s){
-  if(!sessionHasWorker(s)) return ''
-  const coding = legsShouldRun(s)
-  const title = coding
-    ? `Worker coding · pid ${s.pid || '?'}`
-    : `Worker present (idle / stiff) · pid ${s.pid || '?'}`
-  const cls = coding ? 'running' : 'still'
-  return `<div class="claw-icon ${cls} worker-glyph" title="${esc(title)}">${invaderPixelSvg(2)}</div>`
+/**
+ * Where the single column invader goes + how it looks.
+ * ONE worker per SA column on the active SC only. Never on done. Never on twins/corpses.
+ */
+function workerColumnPlacement(s){
+  if(s?.corpse || s?.isWorkerOwner === false){
+    return { show:false, legs:false, reason: s?.twinOf ? `twin of ${s.twinOf}` : 'corpse' }
+  }
+  if(!sessionHasWorker(s)){
+    return { show:false, legs:false, reason:'' }
+  }
+  if(legsShouldRun(s)){
+    return { show:true, legs:true, reason:'' }
+  }
+  const st = String(s.status || '').toLowerCase()
+  const ws = sessionWorkState(s)
+  if(ws === 'hold' || st === 'blocked' || st === 'needs_input'){
+    return {
+      show:true,
+      legs:false,
+      reason: s.stopReason || (oq(s)[0]?.text ? `holding — ${(oq(s)[0].text||'').slice(0,80)}` : 'holding — clash / needs decision'),
+    }
+  }
+  // Stagnant owner with live pid: show stiff + reason. Dead = corpse path (no stack).
+  if(ws === 'stagnant' || st === 'stalled'){
+    return {
+      show:true,
+      legs:false,
+      reason: s.stopReason || 'stagnant — ORCH must notice',
+    }
+  }
+  return { show:false, legs:false, reason:'' }
+}
+/** Header: NO invader. The one worker lives on the active SC in the stack. */
+function workerPresenceIconHtml(_s){
+  return ''
 }
 /**
  * CLAW slice stack: keep completed SC cards (full teal ring) until the whole
@@ -2757,15 +2838,15 @@ function perimPathPx(w, h, r, inset){
     `L ${x + W / 2} ${y}`,
   ].join(' ')
 }
-function perimSvgHtml(pct, withAgent, doneRing, legsRunning=false){
+function perimSvgHtml(pct, withAgent, doneRing, legsRunning=false, agentTitle=''){
   const p = Math.max(0, Math.min(100, Number(pct)||0))
-  // SC-R04: orbit may show; .running legs only when live pid is coding
+  // Invader only when caller says so (active SC only — never done cards).
   const agent = withAgent
     ? (()=>{
+        const title = agentTitle || (legsRunning
+          ? `Worker coding · legs marching · ${p}%`
+          : `Worker stopped · ${p}%`)
         const cls = legsRunning ? 'running' : 'still'
-        const title = legsRunning
-          ? `Worker coding · clockwise ${p}%`
-          : `on board · not armed · ${p}%`
         return `<div class="claw-icon ${cls} orbit-agent" data-orbit-agent="1" data-legs="${legsRunning?'run':'stiff'}" title="${esc(title)}">${invaderPixelSvg(1.7)}</div>`
       })()
     : ''
@@ -2783,13 +2864,23 @@ function perimSvgHtml(pct, withAgent, doneRing, legsRunning=false){
         stroke="${stroke}" stroke-dasharray="0 100" stroke-dashoffset="0"/>
     </svg>${agent}`
 }
+/**
+ * Active SC only: progress ring + at most ONE invader for the whole column.
+ * Done cards call doneSliceRingHtml (ring only, never agent).
+ */
 function activeSliceOrbitHtml(s, t, pct){
-  // Orbit the in-progress SC card always (active work target).
-  // Legs march ONLY when sessionHasWorker / pidAlive (SC-R04 honesty).
   const activeId = s.slice?.id
   const onThis = (t.state==='in-progress') || (activeId && t.id===activeId && t.state!=='done')
   if(!onThis) return ''
-  return perimSvgHtml(pct, true, false, legsShouldRun(s))
+  // Never place a worker on a done card (defensive)
+  if(t.state === 'done') return perimSvgHtml(100, false, true, false)
+  const place = workerColumnPlacement(s)
+  const title = place.legs
+    ? `Worker coding · legs marching · ${pct}%`
+    : (place.reason
+        ? `${place.reason} · ${pct}%`
+        : `Worker on active SC · ${pct}%`)
+  return perimSvgHtml(pct, place.show, false, place.legs, title)
 }
 function doneSliceRingHtml(){
   return perimSvgHtml(100, false, true)
@@ -2849,26 +2940,32 @@ function tickLiveSlicePerimeters(advance){
     const sid = node.dataset.sid
     const s = sessions.find(x=>x.sessionId===sid)
     if(!s) return
-    // Keep the orbiting invader on the live SC card; legs class set at render only
-    // (no pid ⇒ crawl frozen via advancePerimPct; stiff glyph from data-legs)
+    // One invader on THIS active SC only — legs if coding, stiff if clash/issue, else remove.
     const p = advance ? advancePerimPct(s) : currentPerimPct(s)
     node.style.setProperty('--pct', String(p))
     node.dataset.perimPct = String(p)
     const pill = node.querySelector('.nid.pill')
     const id = node.dataset.slice || s.slice?.id || ''
     if(pill && id) pill.textContent = `${id} ${p}%`
-    // Live-toggle legs if pid probe flips mid-tick without full re-render
-    const agent = node.querySelector('[data-orbit-agent]')
-    if(agent){
-      const run = legsShouldRun(s)
-      agent.classList.toggle('running', run)
-      agent.classList.toggle('still', !run)
-      agent.dataset.legs = run ? 'run' : 'stiff'
-      agent.title = run
-        ? `Worker coding · clockwise ${p}%`
-        : `on board · not armed · ${p}%`
+    const place = workerColumnPlacement(s)
+    let agent = node.querySelector('[data-orbit-agent]')
+    if(place.show){
+      if(!agent){
+        const wrap = document.createElement('div')
+        wrap.innerHTML = `<div class="claw-icon ${place.legs?'running':'still'} orbit-agent" data-orbit-agent="1" data-legs="${place.legs?'run':'stiff'}" title="">${invaderPixelSvg(1.7)}</div>`
+        agent = wrap.firstElementChild
+        node.appendChild(agent)
+      }
+      agent.classList.toggle('running', place.legs)
+      agent.classList.toggle('still', !place.legs)
+      agent.dataset.legs = place.legs ? 'run' : 'stiff'
+      agent.title = place.legs
+        ? `Worker coding · legs marching · ${p}%`
+        : (place.reason || `Worker stopped · ${p}%`)
+    } else if(agent){
+      agent.remove()
     }
-    layoutPerim(node, p, true)
+    layoutPerim(node, p, place.show)
   })
 }
 function armPerimTick(){
@@ -3153,13 +3250,16 @@ function groupSessionsByFleet(all){
     map.get(key).sessions.push(s)
   }
   for(const g of map.values()){
-    const s0 = g.sessions[0]
+    const s0 = g.sessions.find(s=>s.isWorkerOwner && (s.pidAlive||s.workerAlive))
+      || g.sessions.find(s=>s.isWorkerOwner)
+      || g.sessions.find(s=>!s.corpse)
+      || g.sessions[0]
     const pathRaw = sessionRepoPath(s0)
     g.path = pathRaw
     g.meta = (fleets||[]).find(f=>f.fleetId && g.sessions.some(s=>s.fleetId===f.fleetId))
       || (fleets||[]).find(f=>normalizeRepoKey(f.primaryRepoPath||f.repoPath||'')===normalizeRepoKey(pathRaw))
       || null
-    g.title = g.meta?.ledgerTitle || s0?.ledgerTitle || g.meta?.label || fleetBrandBase(s0) || 'Fleet'
+    g.title = s0?.ledgerTitle || g.meta?.ledgerTitle || g.meta?.label || fleetBrandBase(s0) || 'Fleet'
     g.repo = g.meta?.repoId || s0?.repoId || repoLabel(s0) || ''
     g.role = classifyFleetRole({ title: g.title, path: pathRaw, repo: g.repo })
     g.k = kpis(g.sessions)
@@ -3260,70 +3360,115 @@ function renderClaw(){
       if(sessionHasWorker(s)) return `<span class="orch-pill run">LIVE pid ${esc(String(s.pid||'?'))}</span>`
       return `<span class="orch-pill">on board · not armed</span>`
     }).join('')
+    // SA range label e.g. SA-1…SA-2
+    const saList = workersIn(fleetSess).map(s=>saBadge(s)).filter(Boolean)
+    const saRange = saList.length
+      ? (saList.length === 1 ? saList[0] : `${saList[0]}…${saList[saList.length-1]}`)
+      : 'no SA'
+    const holdBanner = headNote
+      ? `<div class="claw-orch-hold">${esc(headNote)}</div>`
+      : ''
+    // HEAD ORCHESTRATOR card — big ORCH invader under Previous notes (product ref)
     const head = `<div class="claw-head" data-fleet="${esc(g.fleetId)}">
       ${roleTag}
       <div class="claw-head-card">
-        <div class="ht">${esc(fleetHead)}</div>
-        <div class="hs">${esc(brand)} · <b style="color:#fdba74">ORCH</b> · SA workers · ${k.done}/${k.total} slices${multi&&g.role==='side'?' · off to the side':''}</div>
-        <div class="hb" style="margin-top:4px">${armBits || '<span class="orch-pill">waiting for worker</span>'}</div>
+        <div class="ht">${esc(fleetHead)} - ORCHESTRATOR</div>
+        <div class="hs">You talk only to <b style="color:#fdba74">ORCH</b> - ${nWorkers} sub-agent(s) ${esc(saRange)} - ${k.done}/${k.total} slices</div>
         <div class="hb">
           <span>${k.inflight} in flight</span>
           <span>${k.needs} waiting on you</span>
           <span>${k.p0} P0</span>
-          <span>${nWorkers} SA</span>
+          <span>ORCH only</span>
         </div>
-        ${orchStatusHtml}
+        <div class="hb" style="margin-top:2px">${armBits || '<span class="orch-pill">waiting for worker</span>'}</div>
+        ${fleetMissionEmbeddedHtml(fleetSess, brand)}
+        <button type="button" class="orch-notes-btn" data-orch-notes="1" title="Open ORCH previous-notes log">Previous notes · ${orchNotes().length}</button>
+        <div class="claw-orch-slot" title="Head orchestrator — humans talk here; SAs report up">
+          ${orchSvg(orchState)}
+        </div>
+        ${holdBanner}
         ${clickHereHtml}
-        <button type="button" class="orch-notes-btn" data-orch-notes="1" title="Open ORCH previous-notes log">🗒 Previous notes · ${orchNotes().length}</button>
+        ${orchStatusHtml}
       </div>
       <div class="claw-spine"></div>
     </div>`
 
   const branches = workersIn(fleetSess).map(s=>{
+    // True corpse only (no ledger) — collapse. Ledger projectors keep their stack (shared board).
+    if(s.corpse && !s.ledgerProjector){
+      return `<div class="claw-branch" data-edge="stagnant" data-sid="${s.sessionId}" data-corpse="1">
+        <div class="claw-branch-line"></div>
+        <div class="claw-branch-card" style="opacity:.72;border-color:rgba(251,113,133,.35)">
+          <div class="bh">
+            <div>
+              <div class="bt" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                <span class="role-tag" style="border-color:rgba(251,113,133,.5);color:var(--rose)">Corpse</span>
+                <span>${esc(saBadge(s))} · Chat ${subAgentNo(s)}</span>
+                <span class="badge bad">DEAD</span>
+              </div>
+              <div class="bm">No ledger · purge with Purge dead · ${esc((s.sessionId||'').slice(0,14))}</div>
+            </div>
+          </div>
+        </div>
+      </div>`
+    }
+    const isProjector = !!s.ledgerProjector || (s.isWorkerOwner === false && !sessionHasWorker(s))
     const ws=sessionWorkState(s)
     const todos=s.todo||[]
     const {done,total,pct}=pctOfLedger(s)   // SC-03: same source as card/detail
-    const badge = ws==='running'?'<span class="badge run">ACTIVE</span>'
+    const badge = isProjector
+      ? '<span class="badge" style="border-color:rgba(148,163,184,.45);color:#94a3b8">LEDGER</span>'
+      : (ws==='running'?'<span class="badge run">ACTIVE</span>'
       : ws==='hold'?'<span class="badge hold">HOLDING</span>'
       : ws==='stagnant'?'<span class="badge bad">STAGNANT</span>'
-      : '<span class="badge ok">DONE</span>'
-    const edgeCls = ws==='running'?'run':ws==='hold'?'hold':ws==='stagnant'?'stagnant':ws==='done'?'done':''
+      : '<span class="badge ok">DONE</span>')
+    const edgeCls = isProjector ? '' : (ws==='running'?'run':ws==='hold'?'hold':ws==='stagnant'?'stagnant':ws==='done'?'done':'')
     const hasWorker = sessionHasWorker(s)
     // Stack: completed (full teal ring kept) → live (agent + growing edge) → next pending
     const focusTodos = clawFocusTodos(s)
     // When a slice just completed, lock its crawl at 100% for the full-ring card
     focusTodos.filter(t=>t.state==='done').forEach(t=>markPerimDone(s.sessionId, t.id))
+    // ONE coding invader only on owner active SC. Projectors: stack yes, invader no.
+    const place = isProjector ? { show:false, legs:false, reason:'' } : workerColumnPlacement(s)
     const nodes = focusTodos.map(t=>{
       const st=t.state||'pending'
       const nrun = st==='in-progress' || (s.slice?.id && t.id===s.slice.id && st!=='done')
       const nhold = st==='blocked'
       const nstandby = st==='standby'
       const ndone = st==='done'
-      // Orbit + live-work ring whenever this SC is the active work target
-      // (legs honesty is separate — legsShouldRun / sessionHasWorker)
-      const live = !!nrun
-      const coding = live && legsShouldRun(s)
+      // live = this is the single active SC in the stack (worker works down the list)
+      const live = !!nrun && !ndone
+      const coding = live && place.legs
       // SC-06: standby is on-hold (amber like hold), not stuck (rose = SC-05 only)
       const cls = [
         ndone?'done done-ring':nrun?'run':nhold?'hold':nstandby?'hold':'bad',
         live?'live-work':''
       ].filter(Boolean).join(' ')
       let holdNote=''
+      if(live && place.show && !place.legs && place.reason){
+        holdNote=`<div class="claw-hold-note">${esc(place.reason)}</div>`
+      }
       if(nhold || (ws==='hold' && nrun)) holdNote=`<div class="claw-hold-note">holding — ${esc(s.stopReason||'awaiting operator / dependency')}</div>`
       if(ws==='hold' && st==='pending' && oq(s).length) holdNote=`<div class="claw-hold-note">ORCH hold — ${esc(saBadge(s))} question open</div>`
       const slicePct = live ? currentPerimPct(s) : (ndone ? 100 : 0)
       const idLabel = (live || ndone) ? `${esc(t.id||'')} ${ndone?100:slicePct}%` : esc(t.id||'')
-      const ringHtml = live
-        ? activeSliceOrbitHtml(s, t, slicePct)
-        : (ndone ? doneSliceRingHtml() : '')
-      const nsLabel = live
-        ? (coding ? 'working · orbit' : 'on board · not armed')
-        : (ndone ? 'done · full perimeter' : esc(sliceStateLabel(t)))
+      // Done = full ring, NEVER an invader. Pending = no invader. Active = one worker.
+      const ringHtml = ndone
+        ? doneSliceRingHtml()
+        : (live ? activeSliceOrbitHtml(s, t, slicePct) : '')
+      let nsLabel
+      if(ndone) nsLabel = 'done · full perimeter'
+      else if(live && coding) nsLabel = 'working · legs moving'
+      else if(live && place.show && !place.legs) nsLabel = 'stopped · issue / clash'
+      else if(live) nsLabel = sessionHasWorker(s) ? 'active · waiting next step' : 'active · not armed'
+      else nsLabel = esc(sliceStateLabel(t))
       const cardTitle = ndone
-        ? 'complete · full teal edge'
+        ? 'complete · no worker (worker moved on)'
         : (coding
-            ? 'solid edge = progress, invader legs march (live pid coding)'
-            : 'active SC · stiff invader until ARMED (live pid)')
+            ? 'ONE worker on this SC · legs marching'
+            : (live && place.show
+                ? 'ONE worker stopped on this SC · clash or issue'
+                : (live ? 'active SC · no invader until armed / coding' : 'pending · next in line')))
       return `<div class="claw-node ${cls}" data-sid="${s.sessionId}" data-slice="${esc(t.id||'')}" style="${(live||ndone)?`--pct:${slicePct}`:''}" title="${esc(t.id||'')} — ${cardTitle}">
         ${ringHtml}
         <div class="nt">
@@ -3345,15 +3490,19 @@ function renderClaw(){
             ${workerPresenceIconHtml(s)}
             <div>
               <div class="bt" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                <span class="role-tag worker">Worker</span>
+                <span class="role-tag worker">${isProjector?'Ledger':'Worker'}</span>
                 <span>${esc(saBadge(s))} · Chat ${subAgentNo(s)} · ${esc(rLab)}</span>
                 ${modelChipHtml(s)}
               </div>
-              <div class="bm">${hasWorker
-                ? (legsShouldRun(s)
-                    ? `worker coding (legs) · pid ${esc(String(s.pid||'?'))}`
-                    : `worker idle (stiff) · pid ${esc(String(s.pid||'?'))}`)
-                : `on board · not armed${s.pid?` · pid ${esc(String(s.pid))} dead`:''}`} · model ${esc(modelLabelOf(s))} · ${esc(repoCountPhrase(1))} · ${esc(s.sessionId||'').slice(0,12)}</div>
+              <div class="bm">${isProjector
+                ? `separate ledger on shared board · projector only · no legs · ${esc((s.ledgerTitle||'').slice(0,48)||'ledger')}`
+                : (hasWorker
+                ? (place.legs
+                    ? `1 worker on active SC · legs moving · pid ${esc(String(s.pid||'?'))}`
+                    : (place.show
+                        ? `1 worker stopped (clash/issue) · pid ${esc(String(s.pid||'?'))}`
+                        : `1 worker armed · between slices · pid ${esc(String(s.pid||'?'))}`))
+                : `on board · not armed${s.pid?` · pid ${esc(String(s.pid))} dead`:''}`)} · model ${esc(modelLabelOf(s))} · ${esc(s.sessionId||'').slice(0,12)}</div>
             </div>
           </div>
           <div class="bh-actions">
@@ -3390,6 +3539,26 @@ function renderClaw(){
   stage.innerHTML = multi
     ? `<div class="claw-fleets-row" id="claw-fleets-row">${columns}</div>`
     : (columns || '')
+
+  // Pin ORCH summary above the pan/zoom world so it's never "scrolled away"
+  const view = document.querySelector('.claw-view')
+  if(view){
+    let pin = view.querySelector('.orch-pin-bar')
+    if(!pin){
+      pin = document.createElement('div')
+      pin.className = 'orch-pin-bar'
+      view.appendChild(pin)
+    }
+    const bits = groups.map(g=>{
+      const nw = workersIn(g.sessions).length
+      const coding = workersIn(g.sessions).filter(s=>legsShouldRun(s)).length
+      const role = g.role==='primary' ? 'MAIN' : 'SIDE'
+      return `${role}: ${g.title||'Fleet'} · ${nw} SA · ${coding} legs`
+    }).join('  ·  ')
+    pin.innerHTML = `<span class="pin-main">ORCH DESK</span>
+      <span class="pin-sub"><b>Talk here only</b> — workers report up — ${esc(bits||'no fleets yet')}</span>`
+  }
+
   // Every SC-xx slice row is clickable → its own detail modal (never hijacked by the lane pane)
   stage.querySelectorAll('.claw-node').forEach(el=>{
     el.addEventListener('click',e=>{
@@ -3619,6 +3788,20 @@ function markSynced(source, ok=true){
   connOk = ok
   updateSyncChrome()
 }
+
+async function purgeDeadLanes(){
+  try{
+    const res = await fetchLive('/api/purge-dead', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' })
+    if(!res.ok){ toast('Purge dead failed', String(res.status)); return }
+    const j = await res.json()
+    toast('Purged dead/twins', `${j.purged||0} removed`)
+    refresh('purge-dead', { reconnectLive: false })
+  }catch(e){ toast('Purge dead failed', String(e?.message||e)) }
+}
+document.getElementById('btn-purge-dead')?.addEventListener('click', (e)=>{
+  e.preventDefault()
+  purgeDeadLanes()
+})
 
 function updateSyncChrome(){
   const btn = $('btn-sync')
@@ -4104,56 +4287,22 @@ function joinAlarmWavDataUri(freq=880, ms=280, vol=0.9){
   return 'data:audio/wav;base64,' + btoa(bin)
 }
 
-/** Dual path: WebAudio siren + HTMLAudio beeps (volume MAX). */
+/** ONE short dual-beep in the board tab — not a 12s siren loop. */
 function startJoinAlarmAudio(){
   if(joinAlarmMuted) return
   stopJoinAlarmAudio()
-  // HTMLAudio — more reliable after user gesture than pure oscillators on some hosts
   try{
-    const seq = [880, 1175, 1480, 880, 1480, 1760]
-    let i = 0
-    const tick = ()=>{
-      if(joinAlarmMuted || i >= 24) return
-      const a = new Audio(joinAlarmWavDataUri(seq[i % seq.length], 220, 0.95))
-      a.volume = 1
-      a.play().catch(()=>{})
-      i++
-      setTimeout(tick, 260)
-    }
-    tick()
+    // Two short notes only
+    const seq = [880, 1175]
+    seq.forEach((freq, i)=>{
+      setTimeout(()=>{
+        if(joinAlarmMuted) return
+        const a = new Audio(joinAlarmWavDataUri(freq, 180, 0.85))
+        a.volume = 0.9
+        a.play().catch(()=>{})
+      }, i * 220)
+    })
   }catch(e){ console.warn('join html audio', e) }
-  try{
-    const AC = window.AudioContext || window.webkitAudioContext
-    if(!AC) return
-    if(!joinAlarmCtx) joinAlarmCtx = new AC()
-    const ctx = joinAlarmCtx
-    if(ctx.state === 'suspended') ctx.resume().catch(()=>{})
-    const master = ctx.createGain()
-    // Near max — join gate must cut through
-    master.gain.value = 0.9
-    master.connect(ctx.destination)
-    const mk = (freq, type='square')=>{
-      const o = ctx.createOscillator()
-      const g = ctx.createGain()
-      o.type = type
-      o.frequency.value = freq
-      g.gain.value = 0.45
-      o.connect(g); g.connect(master)
-      o.start()
-      return o
-    }
-    const o1 = mk(880)
-    const o2 = mk(1320)
-    const now = ctx.currentTime
-    master.gain.setValueAtTime(0.15, now)
-    for(let i=0;i<50;i++){
-      const t = now + i * 0.22
-      master.gain.linearRampToValueAtTime(0.95, t + 0.05)
-      master.gain.linearRampToValueAtTime(0.12, t + 0.18)
-    }
-    joinAlarmNodes = [o1, o2, master]
-    setTimeout(()=>{ try{ o1.stop(); o2.stop() }catch{} }, 12000)
-  }catch(e){ console.warn('join webaudio', e) }
 }
 
 function flashJoinTitle(count){
@@ -4194,21 +4343,41 @@ function notifyJoinOs(pending){
   toast('🔐 JOIN REQUEST', body)
 }
 
+/** One browser ding per ledger key — never re-loop while pending sits or audio ends. */
+let joinAlertedLedgerKeys = new Set()
+function joinLedgerKeyClient(r){
+  const h = String(r.ledgerHash||'').trim()
+  if(h) return 'hash:'+h
+  const lp = String(r.ledgerPath||'').trim().toLowerCase().replace(/\\/g,'/')
+  if(lp) return 'path:'+lp
+  const repo = String(r.repoPath||r.repoId||'').trim().toLowerCase()
+  const title = String(r.ledgerTitle||'').trim().toLowerCase()
+  if(repo && title) return 'repo-title:'+repo+'|'+title
+  if(repo) return 'repo:'+repo
+  return r.id ? 'join:'+r.id : ''
+}
+
 function armJoinAttention(pending){
   if(!pending.length){
     stopJoinAlarmAudio()
     joinKnownPending = new Set()
+    // Keep joinAlertedLedgerKeys so the same ledger never re-dings this tab
     return
   }
   const ids = new Set(pending.map(r=>r.id))
-  let isNew = false
-  for(const id of ids){ if(!joinKnownPending.has(id)) isNew = true }
+  const newJoins = pending.filter(r=>!joinKnownPending.has(r.id))
   joinKnownPending = ids
   flashJoinTitle(pending.length)
-  // Re-arm audio when new request arrives, or when gate first shows
-  if(isNew || joinAlarmNodes.length === 0){
+  // Only sound for a ledger we have never alerted in this tab
+  const brandNewLedger = newJoins.find(r=>{
+    const k = joinLedgerKeyClient(r)
+    return k && !joinAlertedLedgerKeys.has(k)
+  })
+  if(brandNewLedger){
+    const k = joinLedgerKeyClient(brandNewLedger)
+    if(k) joinAlertedLedgerKeys.add(k)
     startJoinAlarmAudio()
-    notifyJoinOs(pending)
+    notifyJoinOs([brandNewLedger])
   }
 }
 

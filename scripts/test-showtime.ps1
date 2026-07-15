@@ -130,6 +130,29 @@ try {
   exit 1
 }
 
+# Join-gate aware register: approve then POST session (matches production Door A).
+function Register-BoardSession([hashtable]$Body) {
+  $sid = [string]$Body.sessionId
+  if (-not $Body.repoPath) {
+    $rp = Join-Path $env:TEMP ("showtime-test-repos\" + $sid)
+    New-Item -ItemType Directory -Force -Path (Join-Path $rp '.claude\scratch') | Out-Null
+    $Body.repoPath = $rp
+    $Body.primaryRepoPath = $rp
+  }
+  if (-not $Body.repoId -or $Body.repoId -eq 'repo' -or $Body.repoId -match '^repo-') {
+    $Body.repoId = ('r' + ($sid -replace '[^a-zA-Z0-9]', '')).Substring(0, [Math]::Min(20, ('r' + ($sid -replace '[^a-zA-Z0-9]', '')).Length))
+  }
+  if (-not $Body.branch) { $Body.branch = 'test/main' }
+  $json = $Body | ConvertTo-Json -Depth 8
+  $jr = Invoke-RestMethod -Method POST -Uri "$base/api/join-requests" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 10 -Body $json
+  $jid = $null
+  if ($jr.request -and $jr.request.id) { $jid = [string]$jr.request.id }
+  if ($jid -and $jr.status -eq 'pending') {
+    $null = Invoke-RestMethod -Method POST -Uri "$base/api/join-requests/$jid/approve" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 60 -Body '{"by":"test-showtime"}'
+  }
+  return Invoke-RestMethod -Method POST -Uri "$base/api/sessions" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 10 -Body $json
+}
+
 try {
   $h = Invoke-RestMethod "$base/api/health" -Headers $AuthH -TimeoutSec 5
   if ($h.ok -and $h.product -eq 'Looplet' -and $h.version -ge 2) { Ok "health v$($h.version)" } else { Bad 'health payload' }
@@ -152,39 +175,40 @@ Approved: yes @ 2026-07-10
 ## P0-safe — Pause point  [blocked]
 '@ | Set-Content -LiteralPath $tmp -Encoding utf8
 
-# ---- Join gate: no board entry without sessionId + repo name + branch ----
+# ---- Join gate: no board entry without approval; identity validated on join-requests ----
 try {
   $code = 0
   try {
     Invoke-RestMethod -Method POST -Uri "$base/api/sessions" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
-      repoId = 'Looplet'; branch = 'main'; status = 'running'
+      sessionId = 'v2needjoin'; repoId = 'Looplet'; branch = 'main'; status = 'running'
     } | ConvertTo-Json) | Out-Null
   } catch { $code = [int]$_.Exception.Response.StatusCode }
-  if ($code -eq 400) { Ok 'join gate: no sessionId -> 400' } else { Bad "join gate sessionId gave $code" }
-} catch { Bad "join gate sessionId $_" }
+  # 403 = Door A (approve first); 400 = identity
+  if ($code -eq 403 -or $code -eq 400) { Ok "join gate: sessions without approve -> $code" } else { Bad "join gate sessions gave $code" }
+} catch { Bad "join gate sessions $_" }
 
 try {
   $code = 0
   try {
-    Invoke-RestMethod -Method POST -Uri "$base/api/sessions" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
+    Invoke-RestMethod -Method POST -Uri "$base/api/join-requests" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
       sessionId = 'v2bad1'; repoId = 'repo'; branch = 'main'; status = 'running'
     } | ConvertTo-Json) | Out-Null
   } catch { $code = [int]$_.Exception.Response.StatusCode }
-  if ($code -eq 400) { Ok 'join gate: fake repo -> 400' } else { Bad "join gate repo gave $code" }
+  if ($code -eq 400) { Ok 'join gate: fake repo on join-requests -> 400' } else { Bad "join gate repo gave $code" }
 } catch { Bad "join gate repo $_" }
 
 try {
   $code = 0
   try {
-    Invoke-RestMethod -Method POST -Uri "$base/api/sessions" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
+    Invoke-RestMethod -Method POST -Uri "$base/api/join-requests" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
       sessionId = 'v2bad2'; repoId = 'Looplet'; status = 'running'
     } | ConvertTo-Json) | Out-Null
   } catch { $code = [int]$_.Exception.Response.StatusCode }
-  if ($code -eq 400) { Ok 'join gate: no branch -> 400' } else { Bad "join gate branch gave $code" }
+  if ($code -eq 400) { Ok 'join gate: no branch on join-requests -> 400' } else { Bad "join gate branch gave $code" }
 } catch { Bad "join gate branch $_" }
 
 try {
-  $r = Invoke-RestMethod -Method POST -Uri "$base/api/sessions" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
+  $r = Register-BoardSession @{
     sessionId = $sa; repoId = 'repo-a'; branch = 'test/branch-a'; status = 'running'; ledgerPath = $tmp; ledgerHash = 'hash-a'; ledgerTitle = 'test'
     stats = @{
       measured = $true
@@ -192,7 +216,7 @@ try {
       speed = @{ tokPerSec = 40; tokPerMin = 2400 }
       code = @{ filesCreated = 2; linesAdded = 100; linesPerTokMin = 0.04; filesPerTokMin = 0.001 }
     }
-  } | ConvertTo-Json -Depth 6)
+  }
   if ($r.session.stats.tokens.saved -eq 2500) { Ok 'register stats' } else { Bad 'stats' }
   if ($r.session.counts.done -eq 2 -and $r.session.counts.pending -eq 2 -and $r.session.counts.inProgress -eq 1 -and $r.session.counts.blocked -eq 1) {
     Ok 'ledger parser supports SC/SD/H/P ids'
@@ -202,10 +226,10 @@ try {
 } catch { Bad "register A $_" }
 
 try {
-  $null = Invoke-RestMethod -Method POST -Uri "$base/api/sessions" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
+  $null = Register-BoardSession @{
     sessionId = $sb; repoId = 'repo-b'; branch = 'test/branch-b'; status = 'running'
     todo = @(@{ id = 'SC-01'; text = 'One'; state = 'pending' })
-  } | ConvertTo-Json -Depth 5)
+  }
   Ok 'register B multi-chat'
 } catch { Bad "register B $_" }
 
@@ -215,10 +239,10 @@ try {
 } catch { Bad "mission $_" }
 
 try {
-  $null = Invoke-RestMethod -Method POST -Uri "$base/api/sessions" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
+  $null = Register-BoardSession @{
     sessionId = $sd; repoId = 'repo-old-active'; branch = 'test/old-active'; status = 'running'; ledgerHash = 'old-hash'; ledgerTitle = 'old ledger'; pid = $PID
     todo = @(@{ id = 'SC-99'; text = 'Old active'; state = 'pending' })
-  } | ConvertTo-Json -Depth 5)
+  }
   $pre = Invoke-RestMethod -Method POST -Uri "$base/api/preflight" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
     ledgerHash = 'new-hash'; ledgerTitle = 'new ledger'; staleAfterMs = 3600000
   } | ConvertTo-Json)
@@ -231,10 +255,10 @@ try {
 } catch { Bad "preflight keep $_" }
 
 try {
-  $null = Invoke-RestMethod -Method POST -Uri "$base/api/sessions" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
+  $null = Register-BoardSession @{
     sessionId = $stale; repoId = 'repo-old-stale'; branch = 'test/old-stale'; status = 'running'; ledgerHash = 'old-hash'; ledgerTitle = 'old ledger'; pid = 0
     todo = @(@{ id = 'SC-98'; text = 'Old stale'; state = 'pending' })
-  } | ConvertTo-Json -Depth 5)
+  }
   $staleFile = Join-Path $SessionDir "$stale.json"
   $staleJson = Get-Content -LiteralPath $staleFile -Raw | ConvertFrom-Json
   $staleJson.updatedAt = (Get-Date).AddMinutes(-10).ToString('o')
@@ -253,10 +277,10 @@ try {
 try {
   $repoHandover = Join-Path $env:TEMP "showtime-handover-$complete.md"
   'repo handover body' | Set-Content -LiteralPath $repoHandover -Encoding utf8
-  $null = Invoke-RestMethod -Method POST -Uri "$base/api/sessions" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
+  $null = Register-BoardSession @{
     sessionId = $complete; repoId = 'repo-complete'; branch = 'test/complete'; status = 'running'; ledgerHash = 'hash-complete'; ledgerTitle = 'complete ledger'; pid = $PID; handoverPath = $repoHandover
     todo = @(@{ id = 'SC-77'; text = 'Done'; state = 'done' })
-  } | ConvertTo-Json -Depth 5)
+  }
   $null = Invoke-RestMethod -Method POST -Uri "$base/api/sessions/$complete/heartbeat" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body (@{
     status = 'complete'; handoverPath = $repoHandover; handoverText = 'FINAL HANDOVER FROM TEST'
   } | ConvertTo-Json)

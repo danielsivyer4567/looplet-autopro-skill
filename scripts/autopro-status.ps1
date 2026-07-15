@@ -11,13 +11,19 @@
     pwsh -File autopro-status.ps1
     pwsh -File autopro-status.ps1 -RepoDir 'C:\repos\foo'
     pwsh -File autopro-status.ps1 -Json
-    pwsh -File autopro-status.ps1 -Quiet   # one summary line only
+    pwsh -File autopro-status.ps1 -Quiet      # one summary line only
+    pwsh -File autopro-status.ps1 -Reconcile  # ALSO repair stale state (writes)
+
+  Without -Reconcile this script is strictly read-only: it reports ZOMBIE /
+  session-stale rows but never rewrites autopro-session.json or removes
+  autopro-on* arm flags.
 #>
 param(
   [string]$RepoDir = '',
   [switch]$Json,
   [switch]$Quiet,
-  [switch]$EnsureBoard   # start board if down (optional)
+  [switch]$EnsureBoard,  # start board if down (optional)
+  [switch]$Reconcile     # opt-in: mark stale sessions blocked + remove dead arm flags
 )
 
 $ErrorActionPreference = 'Continue'
@@ -282,12 +288,14 @@ $sessionByPrimary = @{}
 foreach ($s in @($board.Sessions)) {
   $primary = Get-PrimaryFromPath ([string]$s.repoPath)
   if (-not $primary) { $primary = [string]$s.repoId }
-  $alive = Test-PidAlive $s.pid
+  # PID-reuse safe: a session PID only counts as alive when it belongs to a
+  # verified autopro-runner process (name + commandline), not any process
+  # that happens to have inherited the recycled PID.
   $runnerMatch = $runners | Where-Object {
     ($_.SessionId -and $_.SessionId -eq $s.sessionId) -or ($_.Pid -eq $s.pid)
   } | Select-Object -First 1
-  $runnerLabel = if ($alive) { "alive:$($s.pid)" } elseif ($s.pid) { "dead:$($s.pid)" } else { 'none' }
-  if ($runnerMatch -and -not $alive) { $runnerLabel = "alive:$($runnerMatch.Pid)" }
+  $alive = [bool]$runnerMatch
+  $runnerLabel = if ($runnerMatch) { "alive:$($runnerMatch.Pid)" } elseif ($s.pid) { "dead:$($s.pid)" } else { 'none' }
 
   $slice = if ($s.slice -and $s.slice.id) { [string]$s.slice.id } else { '-' }
   $done = 0; $total = 0
@@ -343,7 +351,8 @@ foreach ($root in $roots) {
   }
   $claimedPid = 0
   if ($sessObj -and $sessObj.runnerPid) { try { $claimedPid = [int]$sessObj.runnerPid } catch { $claimedPid = 0 } }
-  $claimedAlive = Test-PidAlive $claimedPid
+  # PID-reuse safe: only a verified autopro-runner process counts as alive.
+  $claimedAlive = ($claimedPid -gt 0) -and (@($runners | Where-Object { $_.Pid -eq $claimedPid }).Count -gt 0)
   $claimedHealthy = $sessObj -and ($sessObj.state -match '^(running|armed|booting|finalizing)$')
 
   $hasFlag = $flags.Count -gt 0
@@ -365,17 +374,21 @@ foreach ($root in $roots) {
     $state = 'ZOMBIE'
     $runnerLabel = if ($claimedPid -gt 0) { "dead:$claimedPid" } else { 'dead:unknown' }
     $statusLabel = 'session-stale'
-    try {
-      $sessObj | Add-Member -NotePropertyName state -NotePropertyValue 'blocked' -Force
-      $sessObj | Add-Member -NotePropertyName outcome -NotePropertyValue 'reconcile-dead-runner' -Force
-      $sessObj | Add-Member -NotePropertyName updatedAt -NotePropertyValue ((Get-Date).ToString('o')) -Force
-      $sessObj | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $sessionFile -Encoding utf8
-    } catch {}
-    # Stale kill switch with no process: disarm so launch can re-arm
-    if ($hasFlag) {
-      $flags | Remove-Item -Force -ErrorAction SilentlyContinue
-      $hasFlag = $false
-      $statusLabel = 'disarmed-stale'
+    # Repairs are opt-in: a status/health command must not mutate session
+    # state or delete arm flags on its read path.
+    if ($Reconcile) {
+      try {
+        $sessObj | Add-Member -NotePropertyName state -NotePropertyValue 'blocked' -Force
+        $sessObj | Add-Member -NotePropertyName outcome -NotePropertyValue 'reconcile-dead-runner' -Force
+        $sessObj | Add-Member -NotePropertyName updatedAt -NotePropertyValue ((Get-Date).ToString('o')) -Force
+        $sessObj | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $sessionFile -Encoding utf8
+      } catch {}
+      # Stale kill switch with no process: disarm so launch can re-arm
+      if ($hasFlag) {
+        $flags | Remove-Item -Force -ErrorAction SilentlyContinue
+        $hasFlag = $false
+        $statusLabel = 'disarmed-stale'
+      }
     }
   } elseif ($hasFlag) {
     $state = 'FLAGGED'

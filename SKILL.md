@@ -34,10 +34,14 @@ Canonical scripts live in this skill:
 | Script | Role |
 |--------|------|
 | `scripts/launch-showtime.ps1` | Arm flag + Show Time + detach runner (**no git**) |
+| `scripts/arm-on-approve.ps1` | **Door A→B:** after board **Approve**, arm workers in that repo |
 | `scripts/autopro-runner.ps1` | Slice loop (**no git** — the worker commits its own slice) |
 | `scripts/worker-engines.ps1` | Multi-engine resolve + argv adapters (claude/codex/gemini/grok/ollama) |
 | `scripts/autopro-doctor.ps1` | Preflight engines/ledger/gate (no arm) |
 | `scripts/showtime-final-check.ps1` | Completion gate: decode worker result → green/red verdict |
+
+**Approve vs Arm (read first):** `references/APPROVE-ARM-CONTRACT.md` — board Approve opens arm when the ledger is `Approved: yes`; Show Time is housing only.  
+**Cold handover:** `references/SHOWTIME-HANDOVER.md` (ORCH head, one worker per column, logs, kill switches).
 | `scripts/theater-server.mjs` | Localhost Show Time server (port 8770+) |
 | `scripts/theater-register.ps1` | ensure / register / heartbeat / complete |
 | `scripts/showtime-open-board.ps1` | **Always** open board URL in browser; companion/extension hooks additive |
