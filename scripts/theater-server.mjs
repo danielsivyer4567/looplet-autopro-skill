@@ -1984,6 +1984,12 @@ function scheduleSessionWipe(sessionId, ms = COMPLETE_WIPE_MS) {
   const t = setTimeout(() => {
     wipeTimers.delete(sessionId)
     try {
+      const s = readJsonSafe(sessionPath(sessionId))
+      // Never blank the board while a runner pid is still alive
+      if (s && (isPidAlive(s.pid) || isPidAlive(s.runnerPid))) {
+        armBridgeLog(`skip wipe live session=${sessionId} pid=${s.pid || s.runnerPid}`)
+        return
+      }
       unregisterSession(sessionId)
       broadcast('wiped', { sessionId, at: nowIso() })
     } catch {}
@@ -1992,14 +1998,79 @@ function scheduleSessionWipe(sessionId, ms = COMPLETE_WIPE_MS) {
 }
 
 /**
- * Production boot sweep:
- * 1) complete / dead-stale sessions → handover (if missing) → wipe from board
- * 2) flush any pending handovers to operator outbox
+ * Re-materialize approved join lanes whose session files were wiped (restart race,
+ * preflight, complete wipe). Keeps the board from going blank while a runner still
+ * heartbeats / holds an approved join. Idempotent.
  */
+function rematerializeApprovedJoins() {
+  const restored = []
+  for (const jr of listJoinRequests('approved')) {
+    if (!jr?.sessionId) continue
+    if (isJunkJoin(jr)) continue
+    // Skip pure test session ids from test-showtime / soak noise
+    if (/^(v2a_|v2b_|v2d_|v2old_|v2done_|sess_armproof_|sess_codex|producer-main|ext-side|sess_demo_|sess_absorb_)/i.test(String(jr.sessionId))) {
+      continue
+    }
+    const existing = readJsonSafe(sessionPath(jr.sessionId))
+    if (existing) continue
+    const pid = Number(jr.pid || jr.runnerPid || 0) || 0
+    const live = isPidAlive(pid)
+    // Flag on disk for this session under repo root (armed runner still working)
+    let flagged = false
+    try {
+      const root = jr.repoPath || jr.primaryRepoPath || ''
+      if (root) {
+        const scratch = path.join(root, '.claude', 'scratch')
+        if (fs.existsSync(scratch)) {
+          const sid = String(jr.sessionId)
+          flagged = fs.readdirSync(scratch).some(
+            (f) => f.startsWith('autopro-on') && (f.includes(sid) || f.includes(sid.slice(0, 16))),
+          )
+        }
+      }
+    } catch { /* ignore */ }
+    // STRICT: only restore if runner pid is alive OR autopro-on flag still present.
+    // Never resurrect historical approved joins by timestamp alone (blank→junk flood).
+    if (!live && !flagged) continue
+    try {
+      const s = registerSession({
+        sessionId: jr.sessionId,
+        repoId: jr.repoId,
+        repoPath: jr.repoPath,
+        branch: jr.branch,
+        ledgerTitle: jr.ledgerTitle,
+        ledgerPath: jr.ledgerPath,
+        ledgerHash: jr.ledgerHash,
+        logPath: jr.logPath,
+        pid: pid || 0,
+        status: jr.statusDesired || 'running',
+        alarms: jr.alarms || undefined,
+        timer: jr.timer || undefined,
+      })
+      jr.rematerializedAt = nowIso()
+      jr.lane = s.lane
+      jr.chatLabel = s.chatLabel
+      jr.updatedAt = nowIso()
+      try { writeJson(joinPath(jr.id), jr) } catch { /* ignore */ }
+      restored.push(jr.sessionId)
+      armBridgeLog(`rematerialize approved join session=${jr.sessionId} join=${jr.id} live=${live} flagged=${flagged}`)
+    } catch (e) {
+      armBridgeLog(`rematerialize fail session=${jr.sessionId} ${e?.message || e}`)
+    }
+  }
+  if (restored.length) {
+    writeJoinBeacon()
+    broadcast('sessions', listSessionsEnriched())
+  }
+  return restored
+}
+
 function preflightSweep(opts = {}) {
   const staleAfterMs = Number(opts.staleAfterMs || STALE_AFTER_MS)
   const currentLedgerHash = opts.ledgerHash ? String(opts.ledgerHash) : ''
   const wipeComplete = opts.wipeComplete !== false
+  // Default OFF — shared multi-ledger board must not erase a live foreign fleet.
+  const killForeignLedgers = opts.killForeignLedgers === true || opts.forceKillActiveForeign === true
   const now = Date.now()
   const wiped = []
   const kept = []
@@ -2008,21 +2079,42 @@ function preflightSweep(opts = {}) {
   for (const raw of listSessions()) {
     const s = enrich(raw)
     const age = s.updatedAt ? now - new Date(s.updatedAt).getTime() : Infinity
-    const alive = isPidAlive(s.pid)
+    // Prefer ownership-enriched live flags; fall back to raw pid probe
+    const alive = !!(s.pidAlive || s.workerAlive || isPidAlive(s.pid) || isPidAlive(s.runnerPid))
     const isComplete = s.status === 'complete'
     const differentLedger = currentLedgerHash && s.ledgerHash && s.ledgerHash !== currentLedgerHash
     const isStaleDead = !alive && age >= staleAfterMs
     const isZombie = !alive && ['running', 'in-progress', 'queued', 'stalled', 'blocked', 'paused', 'needs_input'].includes(s.status) && age >= staleAfterMs
 
-    if (isComplete && wipeComplete) {
+    // HARD RULE: never wipe a live runner — empty board is worse than a twin card
+    if (alive && !isComplete) {
+      kept.push({
+        sessionId: s.sessionId,
+        why: differentLedger ? 'live-different-ledger' : 'live-pid',
+        ageSec: Math.round(age / 1000),
+        pidAlive: true,
+        ledgerHash: s.ledgerHash || null,
+      })
+      continue
+    }
+
+    if (isComplete && wipeComplete && !alive) {
       const ho = createHandoverFromSession(s, 'complete')
       if (ho) handovers.push(ho)
       unregisterSession(s.sessionId)
       wiped.push({ sessionId: s.sessionId, why: 'complete' })
       continue
     }
-    if (isStaleDead || isZombie || (differentLedger && age >= staleAfterMs)) {
-      const reason = differentLedger ? 'stale-different-ledger' : 'stale'
+    // Foreign ledger wipe only when explicitly requested AND dead/stale
+    if (differentLedger && age >= staleAfterMs && killForeignLedgers && !alive) {
+      const ho = createHandoverFromSession(s, 'stale-different-ledger')
+      if (ho) handovers.push(ho)
+      unregisterSession(s.sessionId)
+      wiped.push({ sessionId: s.sessionId, why: 'stale-different-ledger', ageSec: Math.round(age / 1000), pidAlive: false, ledgerHash: s.ledgerHash || null })
+      continue
+    }
+    if (isStaleDead || isZombie) {
+      const reason = 'stale'
       const ho = createHandoverFromSession(s, reason)
       if (ho) handovers.push(ho)
       unregisterSession(s.sessionId)
@@ -2430,6 +2522,8 @@ async function handleApi(req, res, url) {
   }
 
   if (url.pathname === '/api/sessions' && req.method === 'GET') {
+    // Heal blank board: restore approved joins whose session files vanished
+    try { rematerializeApprovedJoins() } catch { /* ignore */ }
     const sessions = listSessionsEnriched()
     let fleets = []
     try { fleets = getFleet().enrichFleetsWithSessions() } catch { fleets = [] }
@@ -2439,6 +2533,7 @@ async function handleApi(req, res, url) {
       mission: missionRollup(sessions),
       partyRule: 'one-orch-per-repo-root',
       fleetsByRoot: fleetsByRepoRoot(),
+      restored: true,
     })
   }
 
@@ -2770,6 +2865,7 @@ async function handleApi(req, res, url) {
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
     })
+    try { rematerializeApprovedJoins() } catch { /* ignore */ }
     const sessions = listSessionsEnriched()
     res.write(`event: sessions\ndata: ${JSON.stringify(sessions)}\n\n`)
     res.write(`event: mission\ndata: ${JSON.stringify(missionRollup(sessions))}\n\n`)
@@ -2902,6 +2998,12 @@ async function main() {
     if (n) console.log(`[showtime] purged ${n} junk session/fleet files on boot`)
   } catch (e) {
     console.warn('[showtime] purgeJunk failed', e?.message || e)
+  }
+  try {
+    const r = rematerializeApprovedJoins()
+    if (r.length) console.log(`[showtime] rematerialized ${r.length} approved join(s) on boot`)
+  } catch (e) {
+    console.warn('[showtime] rematerialize on boot failed', e?.message || e)
   }
   touchIdleTimer()
 

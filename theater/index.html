@@ -1978,7 +1978,20 @@ function renderLanes(){
     empty.style.display='block'
     empty.classList.remove('offline')
     if(!empty.dataset.offline){
-      empty.innerHTML='<h2>SHOWTIME</h2><p>Waiting for sessions… Arm autopro — the TV card lives in chat, not here.</p>'
+      // Never look "dead" — explain recovery paths (server rematerializes approved joins on poll)
+      const hos = (typeof handovers!=='undefined' && handovers && handovers.length)
+        ? handovers.slice(0,3).map(h=>`<div style="font-size:11px;opacity:.75;margin-top:6px;font-family:ui-monospace,Consolas,monospace">${esc((h.topic||h.sessionId||'').slice(0,72))}</div>`).join('')
+        : ''
+      empty.innerHTML=`<h2>SHOWTIME</h2>
+        <p><b>No fleet on the TV right now</b> — not finished, just offline the board.</p>
+        <p style="margin-top:10px;font-size:12px;line-height:1.45;color:var(--muted)">
+          If a runner is still armed, the next poll rematerializes approved joins.<br>
+          Ctrl+F5 · open Board · or re-arm: <code style="color:var(--cyan)">launch-showtime.ps1</code>
+        </p>
+        ${hos?`<div style="margin-top:14px;text-align:left;max-width:420px;margin-left:auto;margin-right:auto"><div style="font-size:10px;letter-spacing:.1em;color:var(--muted)">RECENT HANDOVERS</div>${hos}</div>`:''}
+        <p style="margin-top:16px"><button type="button" id="empty-refresh" style="font:800 12px Segoe UI,system-ui;padding:10px 18px;border-radius:999px;border:1px solid rgba(94,234,212,.45);background:rgba(94,234,212,.12);color:#5eead4;cursor:pointer">Reconnect fleet</button></p>`
+      const btn = document.getElementById('empty-refresh')
+      if(btn) btn.onclick = ()=>{ try{ refresh('manual', { reconnectLive: true }) }catch{ location.reload() } }
     }
     return
   }
