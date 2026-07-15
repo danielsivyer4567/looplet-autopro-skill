@@ -140,13 +140,22 @@ Notes: FIRST arm of this epic — feature branch preferred if dirty; skill is al
   assertions_failed=0; test-showtime failed=0. Human CLAW/MAP watch = operator gate.
 Commit: a2413cf
 
-## SC-08 — Handover + skill pointer for MAP honesty  [pending]
+## SC-08 — Handover + skill pointer for MAP honesty  [done]
 Update SHOWTIME-HANDOVER.md + one line in SKILL.md: MAP uses same honesty as CLAW;
   projectors visible; zero git still true.
 DONE (machine): docs exist; no contradiction with contract
 DONE (human): cold agent can re-arm MAP soak from docs
 Files: references/SHOWTIME-HANDOVER.md, SKILL.md
 Notes: After SC-07 preferred
+  2026-07-15: SHOWTIME-HANDOVER.md gained a "MAP (Pac-Man) view · same honesty as
+  CLAW" section (shared laneHonesty flags, no fake RUNNING, projectors visible via
+  LEDGER badge, corpse=DEAD, groupSessionsByFleet, zero git); SKILL.md features
+  gained one MAP-parity bullet pointing at the handover. No contradiction with the
+  zero-git contract (docs restate it). Referenced artifacts verified present:
+  scripts/lane-honesty.mjs, laneHonesty/groupSessionsByFleet/map-fleet in
+  index.html. Green bar re-run all green: node --check + lane-honesty +
+  worker-ownership + legs-honesty + fleet-group ALL OK; prove READY_CHECK=green
+  assertions_failed=0; test-showtime failed=0.
 Commit: —
 
 ---

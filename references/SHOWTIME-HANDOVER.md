@@ -31,6 +31,30 @@ Stop runners: `scripts/stop-autopro.ps1 -Root <repo>` or `-All`.
 5. **Multi-fleet:** group by repo root (Producer MAIN vs extension SIDE). Never mix.  
 6. **Single runner per repo Root** — never twin runners on same ledger.
 
+## MAP (Pac-Man) view · same honesty as CLAW
+
+The **MAP** view is not a decorative twin — it consumes the **same** server flags
+as CLAW, so the two views can never disagree about who is coding.
+
+- **Shared decision:** `scripts/lane-honesty.mjs` `laneHonesty(s)` → one of
+  `owner-coding` / `owner-idle` / `projector` / `corpse` / `unarmed`. MAP
+  `renderLanes` and CLAW both read it (mirrors `isWorkerOwner`, `pidAlive`,
+  `corpse`, `ledgerProjector`).
+- **No fake RUNNING:** a MAP pac claims `RUNNING` **only** when the lane is the
+  live owner *and* coding. Projectors get a calm pac + **LEDGER** badge (pellets
+  from ledger %, no coding claim); corpses collapse to a **DEAD** strip with no
+  progress crawl; board-only lanes read **BOARD**, not RUNNING.
+- **Projectors stay visible:** every ledger on a shared root still shows its full
+  SC stack on MAP — it just doesn't pretend to be a second writer.
+- **Fleet grouping:** MAP groups sessions by repo root via `groupSessionsByFleet`
+  (`.map-fleet` MAIN/SIDE headers), same as CLAW — no flat anonymous blob.
+- **Zero git still true:** MAP is projection only, exactly like CLAW. Selecting a
+  MAP lane targets ORCH steers/nudge for that sessionId; it never branches,
+  commits, or merges.
+
+Re-arm the MAP soak the same way as any repo (below) and flip to MAP after arm —
+it will match CLAW's truth. Gap audit: `references/MAP-VS-CLAW.md`.
+
 ## Shared board · separate ledgers
 
 - **One Show Time page** — every fleet / ledger is visible together (shared projector).

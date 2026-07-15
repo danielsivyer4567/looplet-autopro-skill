@@ -181,6 +181,7 @@ Remove-Item -LiteralPath '<Root>\.claude\scratch\autopro-on' -Force -ErrorAction
 
 ## Show Time features
 
+- **MAP honesty parity:** the MAP (Pac-Man) view reads the same `laneHonesty` flags as CLAW — projectors stay visible (LEDGER badge, no fake RUNNING), corpses collapse (DEAD), and MAP runs zero git just like CLAW (see `references/SHOWTIME-HANDOVER.md`)
 - **Multi-chat:** second arm joins the same board as the next Chat N lane
 - **Monitor Pac** on the left rail (watches lanes, locks onto problems)
 - **Timer** estimate from remaining slices × rolling avg; pauses when stalled/paused
