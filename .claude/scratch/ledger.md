@@ -93,13 +93,16 @@ Notes: Pairs with SC-02 helpers
   ai-sidebar pointer ledger (pre-existing; SC-06).
 Commit: 4ad4c3d
 
-## SC-05 — Nudge/steer/handover smoke on MAP-selected agent  [pending]
+## SC-05 — Nudge/steer/handover smoke on MAP-selected agent  [done]
 Ensure selecting a MAP lane still targets ORCH desk steers/nudge for that sessionId.
 Offline or live API: steer + consume + inbox line under a temp repoPath session.
 DONE (machine): existing test-showtime nudge/steer pass; optional inbox assert remains green
 DONE (human): from board, Nudge on the soak session leaves a note / listen state
 Files: theater/index.html (wire only if broken), scripts/test-showtime.ps1
 Notes: Do not invent cross-repo git push
+  2026-07-15: MAP click setSelectedAgent(sessionId); selectedId wins over stale
+  picker; .lane.sel + scroll ledge; CLAW branch same. test-map-select-nudge +
+  showtime notes inbox + UI MAP→ORCH wire green.
 Commit: —
 
 ## SC-06 — Prove offline suite still green after MAP edits  [pending]

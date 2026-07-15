@@ -304,6 +304,14 @@ try {
   if ($cs.steers.Count -ge 1) { Ok 'steer + consume' } else { Bad 'steer' }
 } catch { Bad "steer $_" }
 
+# SC-05: notes inbox under same session (MAP→ORCH desk path uses /notes + /steers + /nudge)
+try {
+  $noteBody = @{ text = "SC-05 inbox line for $sa"; from = 'operator' } | ConvertTo-Json
+  $nr = Invoke-RestMethod -Method POST -Uri "$base/api/sessions/$sa/notes" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body $noteBody
+  $noteHit = @($nr.session.notes) | Where-Object { $_.text -match 'SC-05 inbox' } | Select-Object -First 1
+  if ($noteHit) { Ok 'notes inbox line under session' } else { Bad 'notes inbox missing' }
+} catch { Bad "notes inbox $_" }
+
 try {
   $n = Invoke-RestMethod -Method POST -Uri "$base/api/sessions/$sa/nudge" -ContentType 'application/json' -Headers $AuthH -TimeoutSec 5 -Body '{"listenSec":30}'
   if ($n.nudge.status -eq 'listening' -and $n.nudge.listenUntil) { Ok 'nudge listen window' } else { Bad 'nudge listen' }
@@ -320,6 +328,10 @@ try {
   if ($html -match 'btn-nudge' -and $html -match 'orch-click-here|CLICK HERE|data-nudge') {
     Ok 'UI nudge / escalate markers'
   } else { Bad 'UI nudge markers' }
+  # SC-05: MAP select wire still present after fleet grouping / honesty edits
+  if ($html -match 'setSelectedAgent' -and $html -match 'data-tell-nudge' -and $html -match 'targetSessionId' -and $html -match 'lane\.sel|\.lane\.sel') {
+    Ok 'UI MAP→ORCH select + desk nudge wire'
+  } else { Bad 'UI MAP select/nudge wire' }
 } catch { Bad "UI nudge $_" }
 
 try {

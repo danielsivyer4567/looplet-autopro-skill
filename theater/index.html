@@ -764,6 +764,11 @@ input,textarea,[contenteditable="true"]{
   border-color:rgba(94,234,212,.28);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.1), 0 12px 32px rgba(0,0,0,.4)
 }
+/* SC-05: MAP lane selected → ORCH desk steers/nudge target this sessionId */
+.lane.sel{
+  border-color:rgba(94,234,212,.55);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.12), 0 0 0 1px rgba(94,234,212,.25), 0 12px 32px rgba(0,0,0,.4)
+}
 .lane.qflash{
   animation:pulse 1s infinite;
   border-color:rgba(249,115,22,.5);
@@ -1876,7 +1881,8 @@ function mapLaneHtml(s){
   // SC-04: corpse → collapsed DEAD strip (no pellets, no progress crawl, no RUNNING)
   if(h.kind==='corpse'){
     const sub = [s.stopReason || h.label || 'no writer', 'DEAD'].filter(Boolean).join(' — ')
-    return `<div class="lane corpse-strip" data-id="${s.sessionId}" data-honesty="corpse">
+    const selCls = (selectedId && selectedId===s.sessionId) ? ' sel' : ''
+    return `<div class="lane corpse-strip${selCls}" data-id="${s.sessionId}" data-honesty="corpse">
       <div class="lane-h">
         <div class="name"><span class="letter">${letter}</span> ${title} <span class="dim">· dead</span></div>
         <div class="meta stalled">${esc(`${done}/${total} · DEAD`)}</div>
@@ -1946,7 +1952,8 @@ function mapLaneHtml(s){
   const kindBadge = h.kind==='projector'
     ? ' <span class="wt-ref" title="separate ledger · projector only">LEDGER</span>'
     : (h.kind==='unarmed' ? ' <span class="wt-ref" title="on board · not armed">BOARD</span>' : '')
-  return `<div class="lane ${flash}" data-id="${s.sessionId}" data-honesty="${esc(h.kind)}">
+  const selCls = (selectedId && selectedId===s.sessionId) ? ' sel' : ''
+  return `<div class="lane ${flash}${selCls}" data-id="${s.sessionId}" data-honesty="${esc(h.kind)}">
     ${laneMissionHtml(s)}
     <div class="lane-h">
       <div class="name"><span class="letter">${letter}</span> ${title}${kindBadge} <span class="dim">· Chat ${subAgentNo(s)} · ${esc(s.slice?.id||'work')}</span></div>
@@ -1998,12 +2005,20 @@ function renderLanes(){
       </div>`
     }).join('')
   }
+  // SC-05: MAP lane click → selected agent + ORCH desk target (steers/nudge/notes)
   root.querySelectorAll('.lane').forEach(el=>el.addEventListener('click',e=>{
     if(e.target.closest('.mf-lane-close, .mission-float .x')) return
     e.stopPropagation()
-    setSelectedAgent({ sessionId: el.dataset.id, role: 'worker', key: 'worker:'+el.dataset.id })
+    const sid = el.dataset.id
+    if(!sid) return
+    setSelectedAgent({ sessionId: sid, role: 'worker', key: 'worker:'+sid })
     dockOpen=true; applyChrome()
     render()
+    // Scroll ORCH desk ledge for this session into view (dock Tell SA / Nudge)
+    requestAnimationFrame(()=>{
+      const ledge = document.querySelector(`#ledges .ledge[data-id="${CSS.escape(sid)}"]`)
+      if(ledge) ledge.scrollIntoView({ behavior:'smooth', block:'nearest' })
+    })
   }))
   root.querySelectorAll('.mf-lane-close').forEach(btn=>{
     btn.addEventListener('click', e=>{
@@ -2132,16 +2147,17 @@ function setSelectedAgent(partial){
 function ensureSelectedAgent(){
   const agents=listSelectableAgents(fleets, sessions)
   if(!agents.length){ selectedAgent=null; return }
+  // SC-05: explicit MAP/CLAW lane click (selectedId) wins over stale picker / localStorage
+  if(selectedId){
+    const bySess=agents.find(x=>x.sessionId===selectedId && x.role==='worker')
+      || agents.find(x=>x.sessionId===selectedId)
+    if(bySess){ setSelectedAgent(bySess); return }
+  }
   const saved=selectedAgent || loadSelectedAgent()
   if(saved){
     const still=agents.find(x=>x.key===saved.key)
       || agents.find(x=>x.sessionId && x.sessionId===saved.sessionId)
     if(still){ setSelectedAgent(still); return }
-  }
-  if(selectedId){
-    const bySess=agents.find(x=>x.sessionId===selectedId && x.role==='worker')
-      || agents.find(x=>x.sessionId===selectedId)
-    if(bySess){ setSelectedAgent(bySess); return }
   }
   // Prefer first worker
   const firstWorker=agents.find(x=>x.role==='worker') || agents[0]
@@ -3739,8 +3755,9 @@ function renderClaw(){
       if(e.target.closest('.mf-lane-close, .btn-nudge, .orch-click-here')) return
       const sid=el.dataset.sid||el.closest('[data-sid]')?.dataset?.sid
       if(!sid) return
-      selectedId=sid
-      rightOpen=true; applyChrome(); render()
+      // SC-05 parity with MAP: select agent so steers/nudge target this sessionId
+      setSelectedAgent({ sessionId: sid, role: 'worker', key: 'worker:'+sid })
+      rightOpen=true; dockOpen=true; applyChrome(); render()
     })
   })
   // Layout first, then strings in unscaled layout space (never use scaled client rects alone)
