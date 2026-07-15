@@ -120,7 +120,7 @@ Notes: Gate before arm soak
   TEMP and clean it up. Full bar green: node --check + worker-ownership +
   legs-honesty + fleet-group ALL OK; prove READY_CHECK=green assertions_failed=0;
   test-showtime failed=0.
-Commit: —
+Commit: 66fd810
 
 ## SC-07 — Arm soak: run this ledger under Show Time (CLAW watch)  [pending]
 **Only after SC-06 green and user keeps Approved: yes.**
