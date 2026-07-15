@@ -521,60 +521,25 @@ function joinLedgerAlarmKey(jr = {}) {
 }
 
 /**
- * Durable alarm script: ONE short Alarm WAV + balloon. No multi-round spam.
+ * Durable alarm script: ONE short WAV + bottom-right Approve/Deny popup.
+ * Source of truth: scripts/join-alarm-loud.ps1 (copied into STATE_ROOT for launch).
  */
 function ensureJoinAlarmScript() {
-  const script = `# Show Time join alarm — ONE short sound per new ledger (not a loop)
-$ErrorActionPreference = 'Continue'
-$state = Join-Path $env:USERPROFILE '.claude\\scratch\\autopro-theater'
-$log = Join-Path $state 'join-alarm.log'
-$payloadPath = Join-Path $state 'join-alarm-payload.json'
-function Log([string]$m) { try { Add-Content -LiteralPath $log -Value ((Get-Date -Format o) + ' ' + $m) -Encoding utf8 } catch {} }
-Log 'join-alarm start (once)'
-$title = 'SHOW TIME - JOIN REQUEST'
-$body = 'Approve fleet on board'
-try {
-  if (Test-Path -LiteralPath $payloadPath) {
-    $j = Get-Content -LiteralPath $payloadPath -Raw -Encoding utf8 | ConvertFrom-Json
-    if ($j.title) { $title = [string]$j.title }
-    if ($j.body)  { $body  = [string]$j.body }
-  }
-} catch { Log ('payload fail: ' + $_) }
-$media = Join-Path $env:WINDIR 'Media'
-$names = @('Alarm01.wav','Alarm02.wav','Windows Notify.wav','Ring01.wav')
-$wav = $null
-foreach ($n in $names) {
-  $p = Join-Path $media $n
-  if (Test-Path -LiteralPath $p) { $wav = $p; break }
-}
-if (-not $wav) { Log 'NO WAV FILES'; exit 2 }
-Log ('play-once ' + $wav + ' title=' + $title)
-$ni = $null
-try {
-  Add-Type -AssemblyName System.Windows.Forms | Out-Null
-  Add-Type -AssemblyName System.Drawing | Out-Null
-  $ni = New-Object System.Windows.Forms.NotifyIcon
-  $ni.Icon = [System.Drawing.SystemIcons]::Information
-  $ni.Visible = $true
-  $ni.Text = 'SHOW TIME JOIN'
-  $ni.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
-  $ni.BalloonTipTitle = $title
-  $ni.BalloonTipText = $body
-  $ni.ShowBalloonTip(8000)
-  Log 'balloon shown'
-} catch { Log ('balloon fail: ' + $_) }
-try {
-  $player = New-Object System.Media.SoundPlayer $wav
-  $player.Load()
-  $player.PlaySync()
-} catch { Log ('play fail: ' + $_) }
-Start-Sleep -Milliseconds 400
-try { if ($ni) { $ni.Visible = $false; $ni.Dispose() } } catch {}
-Log 'join-alarm done (once)'
-`
+  const src = path.join(SKILL_ROOT, 'scripts', 'join-alarm-loud.ps1')
   try {
     fs.mkdirSync(STATE_ROOT, { recursive: true })
-    fs.writeFileSync(JOIN_ALERT_PS1, script, 'utf8')
+    if (fs.existsSync(src)) {
+      fs.copyFileSync(src, JOIN_ALERT_PS1)
+      return
+    }
+  } catch { /* fall through to minimal stub */ }
+  // Minimal fallback if skill script missing — still copy so launch has a file
+  try {
+    fs.writeFileSync(
+      JOIN_ALERT_PS1,
+      `# fallback join alarm — install scripts/join-alarm-loud.ps1\nWrite-Host 'join-alarm stub'\n`,
+      'utf8',
+    )
   } catch { /* ignore */ }
 }
 
@@ -591,10 +556,24 @@ function launchAlarmProcess() {
     )
   } catch { /* ignore */ }
 
+  // Do NOT use /MIN — the join popup is a WinForms dialog (Approve/Deny) that
+  // must paint on screen. WindowStyle Hidden suppresses the console only.
   try {
     const c = spawn(
       'cmd.exe',
-      ['/c', 'start', '', '/MIN', 'pwsh.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', JOIN_ALERT_PS1],
+      [
+        '/c',
+        'start',
+        '',
+        'pwsh.exe',
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-WindowStyle',
+        'Hidden',
+        '-File',
+        JOIN_ALERT_PS1,
+      ],
       { detached: true, stdio: 'ignore', windowsHide: true },
     )
     c.unref()
@@ -609,7 +588,7 @@ function launchAlarmProcess() {
   try {
     const c2 = spawn(
       'pwsh.exe',
-      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', JOIN_ALERT_PS1],
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', JOIN_ALERT_PS1],
       { detached: true, stdio: 'ignore', windowsHide: true },
     )
     c2.unref()
@@ -643,11 +622,12 @@ function fireJoinOsAlertForLedger(jr) {
   persistJoinAlertedLedgers()
 
   const title = 'SHOW TIME — JOIN REQUEST'
+  const repoBit = jr.repoId || path.basename(String(jr.repoPath || '').replace(/\\/g, '/')) || 'repo'
   const body = [
-    jr.repoId || 'repo',
+    repoBit,
     jr.branch || '',
-    jr.ledgerTitle || jr.sessionId || 'approve fleet on board',
-    `http://127.0.0.1:${serverPort}/`,
+    jr.ledgerTitle || jr.sessionId || '',
+    'APPROVE or DENY on the popup',
   ].filter(Boolean).join(' · ')
 
   ensureJoinAlarmScript()
@@ -660,6 +640,13 @@ function fireJoinOsAlertForLedger(jr) {
         at: new Date().toISOString(),
         ledgerKey,
         joinId: jr.id || null,
+        sessionId: jr.sessionId || null,
+        repoId: jr.repoId || repoBit || null,
+        repoPath: jr.repoPath || jr.primaryRepoPath || null,
+        branch: jr.branch || null,
+        ledgerTitle: jr.ledgerTitle || null,
+        port: String(serverPort),
+        boardUrl: `http://127.0.0.1:${serverPort}/`,
       }),
       'utf8',
     )
@@ -2075,12 +2062,13 @@ function addQuestion(sessionId, body) {
     at: nowIso(),
   }
   if (!q.text) return s
+  // Questions are SA → operator holds only. Operator commands use /steers or /nudge.
   s.questions = s.questions || []
   s.questions.unshift(q)
   s.status = 'needs_input'
-  s.stopReason = `Question: ${q.text.slice(0, 80)}`
+  s.stopReason = `SA needs input: ${q.text.slice(0, 80)}`
   s.updatedAt = nowIso()
-  pushSentinel(s, `Operator question opened on ${q.sliceId || 'lane'}: ${q.text.slice(0, 100)}`, 'warn')
+  pushSentinel(s, `SA hold opened on ${q.sliceId || 'lane'}: ${q.text.slice(0, 100)}`, 'warn')
   writeJson(sessionPath(sessionId), s)
   const e = enrich(s)
   broadcast('sessions', listSessionsEnriched())

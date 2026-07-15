@@ -4560,7 +4560,8 @@ function notifyJoinOs(pending){
   const n = pending.length
   const first = pending[0] || {}
   const title = n === 1 ? 'SHOW TIME — JOIN REQUEST' : `SHOW TIME — ${n} JOIN REQUESTS`
-  const body = [first.repoId, first.branch, first.ledgerTitle || first.sessionId, 'Open board → Approve']
+  // OS PowerShell popup has big APPROVE/DENY; browser toast is secondary focus cue
+  const body = [first.repoId, first.branch, first.ledgerTitle || first.sessionId, 'Click → Approve / Deny on board']
     .filter(Boolean).join(' · ')
   try{
     if(typeof Notification !== 'undefined'){
@@ -4572,7 +4573,14 @@ function notifyJoinOs(pending){
           renotify: true,
           silent: false, // allow OS sound; we also play our own siren
         })
-        note.onclick = ()=>{ try{ window.focus() }catch{} note.close() }
+        note.onclick = ()=>{
+          try{ window.focus() }catch{}
+          try{
+            const gate = document.getElementById('join-gate')
+            if(gate){ gate.hidden=false; gate.style.display='block'; gate.scrollIntoView({block:'nearest'}) }
+          }catch{}
+          note.close()
+        }
       } else if(Notification.permission === 'default'){
         Notification.requestPermission().then(p=>{
           if(p==='granted') notifyJoinOs(pending)
@@ -4661,15 +4669,22 @@ async function loadJoinRequests(){
     box.style.display = 'block'
     if(cnt) cnt.textContent = pending.length + ' waiting'
     armJoinAttention(pending)
-    list.innerHTML = pending.map(r=>`
-      <div data-join="${r.id}" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:#0d0b08;border:1px solid #5a4820;border-radius:8px;padding:8px 10px">
-        <div style="flex:1;min-width:180px">
-          <div style="font-weight:700;color:#ffe08a">${esc(r.repoId||'?')} · ${esc(r.branch||'')}</div>
-          <div style="font-size:11px;opacity:.75">${esc(r.ledgerTitle||r.sessionId||'')} · ${esc(r.sessionId||'')}</div>
+    list.innerHTML = pending.map(r=>{
+      const repo = r.repoId || (String(r.repoPath||'').replace(/\\/g,'/').split('/').filter(Boolean).slice(-1)[0]) || '?'
+      const pathHint = r.repoPath ? String(r.repoPath).replace(/\\/g,'/') : ''
+      return `
+      <div data-join="${r.id}" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;background:#0d0b08;border:1px solid #5a4820;border-radius:10px;padding:10px 12px">
+        <div style="flex:1;min-width:200px">
+          <div style="font-weight:800;font-size:14px;color:#ffe08a;letter-spacing:.02em">${esc(repo)}${r.branch?` · ${esc(r.branch)}`:''}</div>
+          <div style="font-size:11px;opacity:.85;margin-top:2px">${esc(r.ledgerTitle||r.sessionId||'fleet')}</div>
+          ${pathHint?`<div style="font-size:10px;opacity:.55;font-family:ui-monospace,Consolas,monospace;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(pathHint)}">${esc(pathHint)}</div>`:''}
         </div>
-        <button type="button" data-act="approve" data-id="${r.id}" style="background:#2d6a2d;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-weight:700;cursor:pointer">Approve</button>
-        <button type="button" data-act="deny" data-id="${r.id}" style="background:#5a2020;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-weight:700;cursor:pointer">Deny</button>
-      </div>`).join('')
+        <div style="display:flex;gap:8px;flex:none">
+          <button type="button" data-act="approve" data-id="${r.id}" style="background:#22803a;color:#fff;border:0;border-radius:8px;padding:12px 20px;font-weight:900;font-size:13px;letter-spacing:.06em;cursor:pointer;min-width:110px">APPROVE</button>
+          <button type="button" data-act="deny" data-id="${r.id}" style="background:#8c2828;color:#fff;border:0;border-radius:8px;padding:12px 20px;font-weight:900;font-size:13px;letter-spacing:.06em;cursor:pointer;min-width:96px">DENY</button>
+        </div>
+      </div>`
+    }).join('')
     list.querySelectorAll('button[data-act]').forEach(btn=>{
       btn.onclick = async ()=>{
         const id = btn.dataset.id
