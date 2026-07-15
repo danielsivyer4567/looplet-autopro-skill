@@ -45,11 +45,24 @@ if (-not $port) {
 if (-not $port) { $port = '8770' }
 if ($boardUrl -notmatch '://') { $boardUrl = "http://127.0.0.1:$port/" }
 
-$token = ''
-try {
-  $tf = Join-Path $state 'server.token'
-  if (Test-Path -LiteralPath $tf) { $token = (Get-Content -LiteralPath $tf -Raw).Trim() }
-} catch {}
+function Read-ShowTimeToken {
+  try {
+    $tf = Join-Path $state 'server.token'
+    if (Test-Path -LiteralPath $tf) { return (Get-Content -LiteralPath $tf -Raw).Trim() }
+  } catch {}
+  return ''
+}
+function Read-ShowTimePort {
+  try {
+    $pf = Join-Path $state 'server.port'
+    if (Test-Path -LiteralPath $pf) {
+      $p = (Get-Content -LiteralPath $pf -Raw).Trim()
+      if ($p -match '^\d+$') { return $p }
+    }
+  } catch {}
+  return $port
+}
+$token = Read-ShowTimeToken
 
 # --- sound once ---
 $media = Join-Path $env:WINDIR 'Media'
@@ -73,16 +86,33 @@ if ($wav) {
 # --- action popup (bottom-right): big APPROVE / DENY ---
 function Invoke-JoinAct([string]$act) {
   if (-not $joinId) { throw 'missing joinId in payload' }
-  if (-not $token) { throw 'missing server.token — is Show Time running?' }
-  $uri = "http://127.0.0.1:$port/api/join-requests/$([uri]::EscapeDataString($joinId))/$act"
-  $headers = @{ 'X-Showtime-Token' = $token }
+  # Re-read token+port on EVERY click — theater restart mints nothing now (stable
+  # token), but mid-popup restarts used to leave a stale in-memory token → 401.
+  $liveToken = Read-ShowTimeToken
+  $livePort = Read-ShowTimePort
+  if (-not $livePort) { $livePort = '8770' }
+  if (-not $liveToken) { throw 'missing server.token — is Show Time running? Open http://127.0.0.1:8770/ once.' }
+  $uri = "http://127.0.0.1:$livePort/api/join-requests/$([uri]::EscapeDataString($joinId))/$act"
+  $headers = @{ 'X-Showtime-Token' = $liveToken }
   $payload = if ($act -eq 'deny') {
     '{"by":"os-toast","reason":"denied from join popup"}'
   } else {
     '{"by":"os-toast"}'
   }
-  Log ("POST $act joinId=$joinId port=$port")
-  $resp = Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -ContentType 'application/json; charset=utf-8' -Body $payload -TimeoutSec 30
+  Log ("POST $act joinId=$joinId port=$livePort tokenLen=$($liveToken.Length)")
+  try {
+    $resp = Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -ContentType 'application/json; charset=utf-8' -Body $payload -TimeoutSec 30
+  } catch {
+    # One retry after re-read (race: server mid-restart)
+    Start-Sleep -Milliseconds 400
+    $liveToken = Read-ShowTimeToken
+    $livePort = Read-ShowTimePort
+    if (-not $livePort) { $livePort = '8770' }
+    $headers = @{ 'X-Showtime-Token' = $liveToken }
+    $uri = "http://127.0.0.1:$livePort/api/join-requests/$([uri]::EscapeDataString($joinId))/$act"
+    Log ("RETRY $act joinId=$joinId port=$livePort")
+    $resp = Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -ContentType 'application/json; charset=utf-8' -Body $payload -TimeoutSec 30
+  }
   Log ("OK $act status=$($resp.status)")
   return $resp
 }

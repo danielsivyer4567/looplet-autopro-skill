@@ -33,9 +33,19 @@ const HANDOVER_OUTBOX = path.join(STATE_ROOT, 'handover-outbox.md')
 const PORT_FILE = path.join(STATE_ROOT, 'server.port')
 const PID_FILE = path.join(STATE_ROOT, 'server.pid')
 const TOKEN_FILE = path.join(STATE_ROOT, 'server.token')
-// Fresh token per boot; local scripts read it from TOKEN_FILE, the board page
-// gets it injected into index.html. Browsers on other origins never see it.
-const SERVER_TOKEN = crypto.randomBytes(24).toString('hex')
+// STABLE token across restarts: open board tabs + join popups keep working when
+// we bounce theater-server. Mint only when missing/invalid. Never sent to
+// non-loopback clients (health still gates token disclosure).
+function loadOrMintServerToken() {
+  try {
+    if (fs.existsSync(TOKEN_FILE)) {
+      const t = String(fs.readFileSync(TOKEN_FILE, 'utf8') || '').trim()
+      if (/^[a-fA-F0-9]{16,}$/.test(t)) return t
+    }
+  } catch { /* mint */ }
+  return crypto.randomBytes(24).toString('hex')
+}
+const SERVER_TOKEN = loadOrMintServerToken()
 // 8766 is often taken by Electron desktop bridges in this monorepo — default 8770.
 const PREFERRED_PORT = Number(process.env.SHOWTIME_PORT || 8770)
 const PORT_SCAN = 20
@@ -2523,19 +2533,16 @@ async function handleApi(req, res, url) {
   }
 
   if (url.pathname === '/api/health') {
-    // Same-origin token refresh: the board page holds window.__SHOWTIME_TOKEN__
-    // from the boot it was SERVED on. If the server restarts (new token) the
-    // open page's token goes stale and every /api/ call 401s → OFFLINE with no
-    // recovery but a manual hard-reload. So health returns the CURRENT token —
-    // but ONLY to a same-origin request (the board page itself), never to a
-    // cross-site fetch, so the token's CSRF value is preserved. A cross-origin
-    // page sends Sec-Fetch-Site: cross-site (or an Origin that isn't ours);
-    // the board page's own fetch is same-origin (or no Origin on a nav-load).
+    // Token refresh for the board: return CURRENT token only to loopback clients.
+    // Host 127.0.0.1/localhost is the real gate (more reliable than Sec-Fetch-Site
+    // alone — some embeds send odd fetch-site values and then never heal).
     const sfs = String(req.headers['sec-fetch-site'] || '').toLowerCase()
     const origin = req.headers['origin']
+    const hostOnly = String(req.headers.host || '').split(':')[0].toLowerCase()
     const selfOrigins = [`http://127.0.0.1:${serverPort}`, `http://localhost:${serverPort}`]
-    const sameOrigin = (!sfs || sfs === 'same-origin' || sfs === 'none')
-      && (!origin || selfOrigins.includes(origin))
+    const loopbackHost = hostOnly === '127.0.0.1' || hostOnly === 'localhost'
+    const sameOrigin = (!sfs || sfs === 'same-origin' || sfs === 'none' || sfs === 'same-site')
+      && (!origin || selfOrigins.includes(origin) || /:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(String(origin)))
     const payload = {
       ok: true,
       name: 'Show Time',
@@ -2544,7 +2551,7 @@ async function handleApi(req, res, url) {
       sessions: listSessions().length,
       port: serverPort,
     }
-    if (sameOrigin) payload.token = SERVER_TOKEN
+    if (loopbackHost || sameOrigin) payload.token = SERVER_TOKEN
     return send(res, 200, payload)
   }
 

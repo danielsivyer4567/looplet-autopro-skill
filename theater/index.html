@@ -4190,8 +4190,18 @@ function wireLiveStream(){
       }catch{}
     })
     liveEs.onerror = ()=>{
-      // browser will retry EventSource; surface connection doubt
+      // Stale token after theater restart used to leave EventSource dead forever
+      // (URL baked old ?t=). Heal token then hard-reconnect once.
       if(connOk !== false){ connOk = null; updateSyncChrome() }
+      try{
+        fetch('/api/health', { cache:'no-store' }).then(r=>r.json()).then(j=>{
+          if(j && typeof j.token==='string' && j.token && j.token !== window.__SHOWTIME_TOKEN__){
+            window.__SHOWTIME_TOKEN__ = j.token
+            try{ if(liveEs) liveEs.close() }catch{}
+            setTimeout(()=>{ try{ wireLiveStream() }catch{} }, 400)
+          }
+        }).catch(()=>{})
+      }catch{}
     }
   }catch{}
 }
