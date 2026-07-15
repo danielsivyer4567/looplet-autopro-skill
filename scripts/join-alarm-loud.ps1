@@ -1,68 +1,77 @@
 # join-alarm-loud.ps1 — ONE short WAV + bottom-right Approve/Deny popup.
 # Payload: %USERPROFILE%\.claude\scratch\autopro-theater\join-alarm-payload.json
 # Posts approve/deny to local theater with server.token — no board navigation required.
+#
+# Scope rule: WinForms Click handlers run in a weird runspace — ALL mutable
+# state lives in $script: and is re-read from disk on every click (token/port).
 $ErrorActionPreference = 'Continue'
-$state = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater'
-$log = Join-Path $state 'join-alarm.log'
-$payloadPath = Join-Path $state 'join-alarm-payload.json'
+$script:state = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater'
+$script:log = Join-Path $script:state 'join-alarm.log'
+$script:payloadPath = Join-Path $script:state 'join-alarm-payload.json'
+
 function Log([string]$m) {
-  try { Add-Content -LiteralPath $log -Value ((Get-Date -Format o) + ' ' + $m) -Encoding utf8 } catch {}
+  try { Add-Content -LiteralPath $script:log -Value ((Get-Date -Format o) + ' ' + $m) -Encoding utf8 } catch {}
 }
 Log 'join-alarm start (once + action popup)'
 
-$title = 'SHOW TIME — JOIN REQUEST'
-$body = 'Approve or deny this fleet'
-$joinId = ''
-$repoId = ''
-$branch = ''
-$ledgerTitle = ''
-$repoPath = ''
-$sessionId = ''
-$boardUrl = 'http://127.0.0.1:8770/'
-$port = ''
+$script:title = 'SHOW TIME — JOIN REQUEST'
+$script:body = 'Approve or deny this fleet'
+$script:joinId = ''
+$script:repoId = ''
+$script:branch = ''
+$script:ledgerTitle = ''
+$script:repoPath = ''
+$script:sessionId = ''
+$script:boardUrl = 'http://127.0.0.1:8770/'
+$script:port = '8770'
+
 try {
-  if (Test-Path -LiteralPath $payloadPath) {
-    $j = Get-Content -LiteralPath $payloadPath -Raw -Encoding utf8 | ConvertFrom-Json
-    if ($j.title) { $title = [string]$j.title }
-    if ($j.body) { $body = [string]$j.body }
-    if ($j.joinId) { $joinId = [string]$j.joinId }
-    if ($j.repoId) { $repoId = [string]$j.repoId }
-    if ($j.branch) { $branch = [string]$j.branch }
-    if ($j.ledgerTitle) { $ledgerTitle = [string]$j.ledgerTitle }
-    if ($j.repoPath) { $repoPath = [string]$j.repoPath }
-    if ($j.sessionId) { $sessionId = [string]$j.sessionId }
-    if ($j.boardUrl) { $boardUrl = [string]$j.boardUrl }
-    if ($j.port) { $port = [string]$j.port }
+  if (Test-Path -LiteralPath $script:payloadPath) {
+    $j = Get-Content -LiteralPath $script:payloadPath -Raw -Encoding utf8 | ConvertFrom-Json
+    if ($j.title) { $script:title = [string]$j.title }
+    if ($j.body) { $script:body = [string]$j.body }
+    if ($j.joinId) { $script:joinId = [string]$j.joinId }
+    if ($j.repoId) { $script:repoId = [string]$j.repoId }
+    if ($j.branch) { $script:branch = [string]$j.branch }
+    if ($j.ledgerTitle) { $script:ledgerTitle = [string]$j.ledgerTitle }
+    if ($j.repoPath) { $script:repoPath = [string]$j.repoPath }
+    if ($j.sessionId) { $script:sessionId = [string]$j.sessionId }
+    if ($j.boardUrl) { $script:boardUrl = [string]$j.boardUrl }
+    if ($j.port) { $script:port = [string]$j.port }
   }
 } catch { Log ('payload fail: ' + $_) }
 
-if (-not $port) {
-  try {
-    $pf = Join-Path $state 'server.port'
-    if (Test-Path -LiteralPath $pf) { $port = (Get-Content -LiteralPath $pf -Raw).Trim() }
-  } catch {}
-}
-if (-not $port) { $port = '8770' }
-if ($boardUrl -notmatch '://') { $boardUrl = "http://127.0.0.1:$port/" }
-
 function Read-ShowTimeToken {
   try {
-    $tf = Join-Path $state 'server.token'
-    if (Test-Path -LiteralPath $tf) { return (Get-Content -LiteralPath $tf -Raw).Trim() }
+    $tf = Join-Path $script:state 'server.token'
+    if (Test-Path -LiteralPath $tf) {
+      $t = (Get-Content -LiteralPath $tf -Raw -Encoding utf8).Trim()
+      # strip BOM / whitespace
+      $t = $t -replace '^\uFEFF', ''
+      if ($t -match '^[a-fA-F0-9]{16,}$') { return $t }
+      return $t
+    }
   } catch {}
   return ''
 }
 function Read-ShowTimePort {
   try {
-    $pf = Join-Path $state 'server.port'
+    $pf = Join-Path $script:state 'server.port'
     if (Test-Path -LiteralPath $pf) {
       $p = (Get-Content -LiteralPath $pf -Raw).Trim()
       if ($p -match '^\d+$') { return $p }
     }
   } catch {}
-  return $port
+  if ($script:port -match '^\d+$') { return $script:port }
+  return '8770'
 }
-$token = Read-ShowTimeToken
+
+if (-not $script:port -or $script:port -notmatch '^\d+$') {
+  $script:port = Read-ShowTimePort
+}
+if ($script:boardUrl -notmatch '://') {
+  $script:boardUrl = "http://127.0.0.1:$($script:port)/"
+}
 
 # --- sound once ---
 $media = Join-Path $env:WINDIR 'Media'
@@ -76,48 +85,83 @@ if ($wav) {
   try {
     $player = New-Object System.Media.SoundPlayer $wav
     $player.Load()
-    $player.Play()  # async so form can show immediately
+    $player.Play()
     Log ('play-once ' + $wav)
   } catch { Log ('play fail: ' + $_) }
 } else {
   Log 'NO WAV FILES'
 }
 
-# --- action popup (bottom-right): big APPROVE / DENY ---
+# --- HTTP (no Invoke-RestMethod quirks; full 401 body) ---
 function Invoke-JoinAct([string]$act) {
-  if (-not $joinId) { throw 'missing joinId in payload' }
-  # Re-read token+port on EVERY click — theater restart mints nothing now (stable
-  # token), but mid-popup restarts used to leave a stale in-memory token → 401.
+  if (-not $script:joinId) { throw 'missing joinId in payload' }
   $liveToken = Read-ShowTimeToken
   $livePort = Read-ShowTimePort
-  if (-not $livePort) { $livePort = '8770' }
-  if (-not $liveToken) { throw 'missing server.token — is Show Time running? Open http://127.0.0.1:8770/ once.' }
-  $uri = "http://127.0.0.1:$livePort/api/join-requests/$([uri]::EscapeDataString($joinId))/$act"
-  $headers = @{ 'X-Showtime-Token' = $liveToken }
-  $payload = if ($act -eq 'deny') {
-    '{"by":"os-toast","reason":"denied from join popup"}'
+  if (-not $liveToken) { throw 'missing server.token — open http://127.0.0.1:8770/ once then retry' }
+
+  $uri = "http://127.0.0.1:$livePort/api/join-requests/$([uri]::EscapeDataString($script:joinId))/$act"
+  $bodyObj = if ($act -eq 'deny') {
+    @{ by = 'os-toast'; reason = 'denied from join popup' }
   } else {
-    '{"by":"os-toast"}'
+    @{ by = 'os-toast' }
   }
-  Log ("POST $act joinId=$joinId port=$livePort tokenLen=$($liveToken.Length)")
-  try {
-    $resp = Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -ContentType 'application/json; charset=utf-8' -Body $payload -TimeoutSec 30
-  } catch {
-    # One retry after re-read (race: server mid-restart)
-    Start-Sleep -Milliseconds 400
-    $liveToken = Read-ShowTimeToken
-    $livePort = Read-ShowTimePort
-    if (-not $livePort) { $livePort = '8770' }
-    $headers = @{ 'X-Showtime-Token' = $liveToken }
-    $uri = "http://127.0.0.1:$livePort/api/join-requests/$([uri]::EscapeDataString($joinId))/$act"
-    Log ("RETRY $act joinId=$joinId port=$livePort")
-    $resp = Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -ContentType 'application/json; charset=utf-8' -Body $payload -TimeoutSec 30
+  $json = $bodyObj | ConvertTo-Json -Compress
+  Log ("POST $act joinId=$($script:joinId) port=$livePort tokenLen=$($liveToken.Length) uri=$uri")
+
+  $attempt = 0
+  $lastErr = $null
+  while ($attempt -lt 2) {
+    $attempt++
+    try {
+      # WebRequest so we control headers + read error JSON body on 401
+      $resp = Invoke-WebRequest -Method POST -Uri $uri `
+        -Headers @{ 'X-Showtime-Token' = $liveToken } `
+        -ContentType 'application/json; charset=utf-8' `
+        -Body ([System.Text.Encoding]::UTF8.GetBytes($json)) `
+        -UseBasicParsing -TimeoutSec 30
+      $parsed = $null
+      try { $parsed = $resp.Content | ConvertFrom-Json } catch { $parsed = @{ status = 'ok'; raw = $resp.Content } }
+      Log ("OK $act status=$($parsed.status) http=$($resp.StatusCode)")
+      return $parsed
+    } catch {
+      $lastErr = $_
+      $msg = [string]$_.Exception.Message
+      $detail = ''
+      try {
+        $er = $_.ErrorDetails.Message
+        if ($er) { $detail = $er }
+      } catch {}
+      try {
+        $respObj = $_.Exception.Response
+        if ($respObj -and $respObj.GetResponseStream) {
+          $sr = New-Object System.IO.StreamReader($respObj.GetResponseStream())
+          $detail = $sr.ReadToEnd()
+          $sr.Close()
+        }
+      } catch {}
+      Log ("FAIL $act attempt=$attempt msg=$msg detail=$detail")
+      if ($attempt -lt 2) {
+        Start-Sleep -Milliseconds 500
+        $liveToken = Read-ShowTimeToken
+        $livePort = Read-ShowTimePort
+        $uri = "http://127.0.0.1:$livePort/api/join-requests/$([uri]::EscapeDataString($script:joinId))/$act"
+        Log ("RETRY with fresh tokenLen=$($liveToken.Length) port=$livePort")
+        continue
+      }
+    }
   }
-  Log ("OK $act status=$($resp.status)")
-  return $resp
+  $hint = 'Open board and Approve there if this keeps failing.'
+  if ($lastErr) {
+    $em = [string]$lastErr.Exception.Message
+    if ($em -match '401|Unauthorized|bad token|missing') {
+      throw "Auth failed (token). $hint"
+    }
+    throw "$em — $hint"
+  }
+  throw "approve/deny failed — $hint"
 }
 
-$acted = $false
+$script:acted = $false
 try {
   Add-Type -AssemblyName System.Windows.Forms | Out-Null
   Add-Type -AssemblyName System.Drawing | Out-Null
@@ -126,7 +170,7 @@ try {
   $form.Text = 'SHOW TIME — JOIN'
   $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
   $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
-  $form.Size = New-Object System.Drawing.Size(400, 248)
+  $form.Size = New-Object System.Drawing.Size(420, 270)
   $form.MaximizeBox = $false
   $form.MinimizeBox = $false
   $form.TopMost = $true
@@ -135,7 +179,6 @@ try {
   $form.ForeColor = [System.Drawing.Color]::FromArgb(245, 230, 200)
   $form.Font = New-Object System.Drawing.Font('Segoe UI', 9.5)
 
-  # Bottom-right of primary work area
   $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
   $form.Location = New-Object System.Drawing.Point(
     ($wa.Right - $form.Width - 16),
@@ -147,34 +190,42 @@ try {
   $lblHead.Font = New-Object System.Drawing.Font('Segoe UI', 11, [System.Drawing.FontStyle]::Bold)
   $lblHead.ForeColor = [System.Drawing.Color]::FromArgb(240, 192, 64)
   $lblHead.Location = New-Object System.Drawing.Point(14, 12)
-  $lblHead.Size = New-Object System.Drawing.Size(360, 24)
+  $lblHead.Size = New-Object System.Drawing.Size(380, 24)
   $form.Controls.Add($lblHead)
 
-  $repoLine = if ($repoId) { $repoId } else { 'unknown repo' }
-  if ($branch) { $repoLine = "$repoLine  ·  $branch" }
+  $repoLine = if ($script:repoId) { $script:repoId } else { 'unknown repo' }
+  if ($script:branch) { $repoLine = "$repoLine  ·  $($script:branch)" }
   $lblRepo = New-Object System.Windows.Forms.Label
   $lblRepo.Text = $repoLine
   $lblRepo.Font = New-Object System.Drawing.Font('Segoe UI', 11, [System.Drawing.FontStyle]::Bold)
   $lblRepo.ForeColor = [System.Drawing.Color]::FromArgb(255, 236, 170)
   $lblRepo.Location = New-Object System.Drawing.Point(14, 42)
-  $lblRepo.Size = New-Object System.Drawing.Size(360, 24)
+  $lblRepo.Size = New-Object System.Drawing.Size(380, 24)
   $form.Controls.Add($lblRepo)
 
   $subBits = @()
-  if ($ledgerTitle) { $subBits += $ledgerTitle }
-  if ($sessionId) { $subBits += $sessionId }
-  if ($repoPath) { $subBits += $repoPath }
+  if ($script:ledgerTitle) { $subBits += $script:ledgerTitle }
+  if ($script:sessionId) { $subBits += $script:sessionId }
+  if ($script:repoPath) { $subBits += $script:repoPath }
   $lblSub = New-Object System.Windows.Forms.Label
-  $lblSub.Text = if ($subBits.Count) { ($subBits -join "`n") } else { $body }
+  $lblSub.Text = if ($subBits.Count) { ($subBits -join "`n") } else { $script:body }
   $lblSub.ForeColor = [System.Drawing.Color]::FromArgb(180, 170, 150)
   $lblSub.Location = New-Object System.Drawing.Point(14, 70)
-  $lblSub.Size = New-Object System.Drawing.Size(360, 48)
+  $lblSub.Size = New-Object System.Drawing.Size(380, 52)
   $form.Controls.Add($lblSub)
 
+  $hasJoin = [bool]$script:joinId
+  $hasTok = [bool](Read-ShowTimeToken)
   $lblStatus = New-Object System.Windows.Forms.Label
-  $lblStatus.Text = if ($joinId -and $token) { 'Approve this fleet onto the board, or deny it.' } else { 'Missing join id/token — open the board.' }
-  $lblStatus.Location = New-Object System.Drawing.Point(14, 122)
-  $lblStatus.Size = New-Object System.Drawing.Size(360, 20)
+  $lblStatus.Text = if ($hasJoin -and $hasTok) {
+    'Approve this fleet onto the board, or deny it.'
+  } elseif (-not $hasJoin) {
+    'Missing join id — use Open board.'
+  } else {
+    'No server.token yet — open the board once, then Approve.'
+  }
+  $lblStatus.Location = New-Object System.Drawing.Point(14, 126)
+  $lblStatus.Size = New-Object System.Drawing.Size(380, 22)
   $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(160, 150, 130)
   $form.Controls.Add($lblStatus)
 
@@ -184,9 +235,9 @@ try {
   $btnApprove.BackColor = [System.Drawing.Color]::FromArgb(34, 120, 56)
   $btnApprove.ForeColor = [System.Drawing.Color]::White
   $btnApprove.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-  $btnApprove.Location = New-Object System.Drawing.Point(14, 152)
-  $btnApprove.Size = New-Object System.Drawing.Size(170, 48)
-  $btnApprove.Enabled = [bool]($joinId -and $token)
+  $btnApprove.Location = New-Object System.Drawing.Point(14, 158)
+  $btnApprove.Size = New-Object System.Drawing.Size(180, 48)
+  $btnApprove.Enabled = $hasJoin
   $form.Controls.Add($btnApprove)
 
   $btnDeny = New-Object System.Windows.Forms.Button
@@ -195,18 +246,22 @@ try {
   $btnDeny.BackColor = [System.Drawing.Color]::FromArgb(140, 40, 40)
   $btnDeny.ForeColor = [System.Drawing.Color]::White
   $btnDeny.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-  $btnDeny.Location = New-Object System.Drawing.Point(200, 152)
-  $btnDeny.Size = New-Object System.Drawing.Size(170, 48)
-  $btnDeny.Enabled = [bool]($joinId -and $token)
+  $btnDeny.Location = New-Object System.Drawing.Point(210, 158)
+  $btnDeny.Size = New-Object System.Drawing.Size(180, 48)
+  $btnDeny.Enabled = $hasJoin
   $form.Controls.Add($btnDeny)
 
   $btnBoard = New-Object System.Windows.Forms.LinkLabel
-  $btnBoard.Text = 'Open board'
+  $btnBoard.Text = 'Open board (always works)'
   $btnBoard.LinkColor = [System.Drawing.Color]::FromArgb(100, 200, 220)
-  $btnBoard.Location = New-Object System.Drawing.Point(14, 204)
-  $btnBoard.Size = New-Object System.Drawing.Size(120, 18)
+  $btnBoard.Location = New-Object System.Drawing.Point(14, 216)
+  $btnBoard.Size = New-Object System.Drawing.Size(220, 18)
   $btnBoard.Add_LinkClicked({
-      try { Start-Process $boardUrl } catch { Log ('open board fail: ' + $_) }
+      try {
+        $u = $script:boardUrl
+        if (-not $u) { $u = "http://127.0.0.1:$(Read-ShowTimePort)/" }
+        Start-Process $u
+      } catch { Log ('open board fail: ' + $_) }
     })
   $form.Controls.Add($btnBoard)
 
@@ -221,11 +276,13 @@ try {
         $lblStatus.Text = 'APPROVED — fleet on board'
         $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(120, 220, 120)
         Log 'popup APPROVE ok'
-        Start-Sleep -Milliseconds 700
+        Start-Sleep -Milliseconds 600
         $form.Close()
       } catch {
         Log ('popup APPROVE fail: ' + $_)
-        $lblStatus.Text = 'Approve failed: ' + $_.Exception.Message
+        $short = [string]$_.Exception.Message
+        if ($short.Length -gt 90) { $short = $short.Substring(0, 90) + '…' }
+        $lblStatus.Text = 'Failed: ' + $short
         $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(255, 140, 120)
         $btnApprove.Enabled = $true
         $btnDeny.Enabled = $true
@@ -242,39 +299,39 @@ try {
         $lblStatus.Text = 'DENIED'
         $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(255, 140, 120)
         Log 'popup DENY ok'
-        Start-Sleep -Milliseconds 700
+        Start-Sleep -Milliseconds 600
         $form.Close()
       } catch {
         Log ('popup DENY fail: ' + $_)
-        $lblStatus.Text = 'Deny failed: ' + $_.Exception.Message
+        $short = [string]$_.Exception.Message
+        if ($short.Length -gt 90) { $short = $short.Substring(0, 90) + '…' }
+        $lblStatus.Text = 'Failed: ' + $short
         $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(255, 140, 120)
         $btnApprove.Enabled = $true
         $btnDeny.Enabled = $true
       }
     })
 
-  # Auto-dismiss after 10 minutes if ignored (leave pending on board)
   $timer = New-Object System.Windows.Forms.Timer
   $timer.Interval = 10 * 60 * 1000
   $timer.Add_Tick({ $timer.Stop(); $form.Close() })
   $timer.Start()
 
-  Log ('popup shown joinId=' + $joinId + ' repo=' + $repoId)
+  Log ('popup shown joinId=' + $script:joinId + ' repo=' + $script:repoId)
   [void]$form.ShowDialog()
   $timer.Stop()
   $timer.Dispose()
   $form.Dispose()
-  Log ('popup closed acted=' + $acted)
+  Log ('popup closed acted=' + $script:acted)
 } catch {
   Log ('popup fail: ' + $_)
-  # Fallback: classic balloon only
   try {
     $ni = New-Object System.Windows.Forms.NotifyIcon
     $ni.Icon = [System.Drawing.SystemIcons]::Information
     $ni.Visible = $true
     $ni.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
-    $ni.BalloonTipTitle = $title
-    $ni.BalloonTipText = ($body + ' · Open board to Approve/Deny')
+    $ni.BalloonTipTitle = $script:title
+    $ni.BalloonTipText = ($script:body + ' · Open board to Approve/Deny')
     $ni.ShowBalloonTip(10000)
     Start-Sleep -Seconds 8
     $ni.Visible = $false
