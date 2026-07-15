@@ -105,13 +105,21 @@ Notes: Do not invent cross-repo git push
   showtime notes inbox + UI MAP→ORCH wire green.
 Commit: 732d60d
 
-## SC-06 — Prove offline suite still green after MAP edits  [pending]
+## SC-06 — Prove offline suite still green after MAP edits  [done]
 Run full bar: prove-approve-arm-offline + test-showtime.
 Fix any regressions from SC-02..05.
 DONE (machine): READY_CHECK=green; test-showtime failed=0
 DONE (human): n/a
 Files: scripts/*
 Notes: Gate before arm soak
+  2026-07-15: root cause of the pre-existing red (SC-04 note) = offline WhatIf
+  self-test hardcoded -RepoDir C:\LOOPLET\ai-sidebar, whose ledger became a
+  POINTER (not Approved: yes) → ledger_not_approved cascaded 4 fails. Fix stays
+  in-repo (house lock: never touch ai-sidebar): test-arm-on-approve.ps1 +
+  prove-approve-arm-offline.ps1 now build a throwaway Approved:yes fixture in
+  TEMP and clean it up. Full bar green: node --check + worker-ownership +
+  legs-honesty + fleet-group ALL OK; prove READY_CHECK=green assertions_failed=0;
+  test-showtime failed=0.
 Commit: —
 
 ## SC-07 — Arm soak: run this ledger under Show Time (CLAW watch)  [pending]

@@ -61,28 +61,37 @@ if (-not (Test-Path -LiteralPath $armTest)) {
 }
 
 # --- 2b) arm-on-approve -WhatIf (validate only, never launch) ---
+# SC-06: use a self-contained approved fixture in TEMP. The offline READY bar
+# must not depend on any foreign repo's approval state (ai-sidebar's ledger is
+# now a pointer, not Approved: yes).
 $arm = Join-Path $here 'arm-on-approve.ps1'
-$repo = 'C:\LOOPLET\ai-sidebar'
-$ledger = Join-Path $repo '.claude\scratch\ledger.md'
+$fixRepo = Join-Path ([System.IO.Path]::GetTempPath()) ("armprove_$PID`_" + [guid]::NewGuid().ToString('N'))
+$fixScratch = Join-Path $fixRepo '.claude\scratch'
 if (-not (Test-Path -LiteralPath $arm)) {
   Note-Fail "arm-on-approve.ps1 missing at $arm"
-} elseif (-not (Test-Path -LiteralPath $ledger)) {
-  Note-Fail "approved ledger missing for WhatIf at $ledger"
 } else {
-  $whatIfOut = & pwsh -NoProfile -File $arm `
-    -RepoDir $repo -Root $repo `
-    -SessionId 'sess_prove_offline_r05' `
-    -WhatIf 2>&1 | ForEach-Object { "$_" }
-  $code = $LASTEXITCODE
-  $joined = $whatIfOut -join "`n"
-  $ok = ($code -eq 0) -and ($joined -match 'ARM_STATUS=whatif_ok')
-  # Hard guard: offline proof must never leave an arm/launch trail
-  $bad = $joined -match '(?m)^ARM_STATUS=(armed|already_armed)\b'
-  if ($ok -and -not $bad) {
-    Note-Ok 'arm-on-approve.ps1 -WhatIf → ARM_STATUS=whatif_ok'
-  } else {
-    Note-Fail "arm-on-approve -WhatIf failed (exit=$code)"
-    $whatIfOut | Select-Object -Last 12 | ForEach-Object { Write-Host "  $_" }
+  New-Item -ItemType Directory -Force -Path $fixScratch | Out-Null
+  Set-Content -LiteralPath (Join-Path $fixScratch 'ledger.md') `
+    -Value "# Arm fixture ledger`nApproved: yes @ 2026-07-15`n`n## S1 fixture slice  [pending]`n" `
+    -Encoding utf8
+  try {
+    $whatIfOut = & pwsh -NoProfile -File $arm `
+      -RepoDir $fixRepo -Root $fixRepo `
+      -SessionId 'sess_prove_offline_r05' `
+      -WhatIf 2>&1 | ForEach-Object { "$_" }
+    $code = $LASTEXITCODE
+    $joined = $whatIfOut -join "`n"
+    $ok = ($code -eq 0) -and ($joined -match 'ARM_STATUS=whatif_ok')
+    # Hard guard: offline proof must never leave an arm/launch trail
+    $bad = $joined -match '(?m)^ARM_STATUS=(armed|already_armed)\b'
+    if ($ok -and -not $bad) {
+      Note-Ok 'arm-on-approve.ps1 -WhatIf → ARM_STATUS=whatif_ok'
+    } else {
+      Note-Fail "arm-on-approve -WhatIf failed (exit=$code)"
+      $whatIfOut | Select-Object -Last 12 | ForEach-Object { Write-Host "  $_" }
+    }
+  } finally {
+    Remove-Item -LiteralPath $fixRepo -Recurse -Force -ErrorAction SilentlyContinue
   }
 }
 

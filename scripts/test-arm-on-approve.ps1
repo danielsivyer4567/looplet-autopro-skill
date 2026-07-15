@@ -77,25 +77,30 @@ $parsed2 = Get-ArmParseFromLaunchOutput @('ARM_SESSION=sess_x', 'ARM_PID=12')
 Assert-True ($parsed2.ArmedSessionId -eq 'sess_x') 'parse ARM_SESSION'
 Assert-True ($parsed2.RunnerPid -eq 12) 'parse ARM_PID'
 
-# --- WhatIf dry-run against a real approved ledger (no arm) ---
-$repo = 'C:\LOOPLET\ai-sidebar'
-$ledger = Join-Path $repo '.claude\scratch\ledger.md'
-if (Test-Path -LiteralPath $ledger) {
-  $out = & pwsh -NoProfile -File $arm -RepoDir $repo -Root $repo -SessionId 'sess_whatif_test' -WhatIf 2>&1 | ForEach-Object { "$_" }
+# --- WhatIf dry-run against a self-contained approved fixture (no foreign repo) ---
+# SC-06: earlier this pointed at C:\LOOPLET\ai-sidebar, whose ledger became a
+# pointer (not Approved: yes). The offline proof must not depend on any other
+# repo's approval state — build a throwaway approved ledger in TEMP instead.
+$fixRepo = Join-Path ([System.IO.Path]::GetTempPath()) ("armfix_$PID`_" + [guid]::NewGuid().ToString('N'))
+$fixScratch = Join-Path $fixRepo '.claude\scratch'
+New-Item -ItemType Directory -Force -Path $fixScratch | Out-Null
+Set-Content -LiteralPath (Join-Path $fixScratch 'ledger.md') `
+  -Value "# Arm fixture ledger`nApproved: yes @ 2026-07-15`n`n## S1 fixture slice  [pending]`n" `
+  -Encoding utf8
+try {
+  $out = & pwsh -NoProfile -File $arm -RepoDir $fixRepo -Root $fixRepo -SessionId 'sess_whatif_test' -WhatIf 2>&1 | ForEach-Object { "$_" }
   $joined = $out -join "`n"
   Assert-True ($LASTEXITCODE -eq 0) "WhatIf exit 0 (got $LASTEXITCODE)"
   Assert-True ($joined -match 'ARM_STATUS=whatif_ok') 'WhatIf emits whatif_ok'
   Assert-True ($joined -match 'ARM_LEDGER_APPROVED=1') 'WhatIf sees approved ledger'
-} else {
-  Write-Host "skip: WhatIf live ledger missing at $ledger"
-}
 
-# --- WhatIf junk session must skip before launch ---
-if (Test-Path -LiteralPath $ledger) {
-  $outJ = & pwsh -NoProfile -File $arm -RepoDir $repo -Root $repo -SessionId 'sound-test-xyz' -WhatIf -IAcceptBoardApproveAsArmConsent 2>&1 | ForEach-Object { "$_" }
+  # --- WhatIf junk session must skip before launch ---
+  $outJ = & pwsh -NoProfile -File $arm -RepoDir $fixRepo -Root $fixRepo -SessionId 'sound-test-xyz' -WhatIf -IAcceptBoardApproveAsArmConsent 2>&1 | ForEach-Object { "$_" }
   $j = $outJ -join "`n"
   Assert-True ($LASTEXITCODE -eq 2) "junk WhatIf exit 2 (got $LASTEXITCODE)"
   Assert-True ($j -match 'ARM_REASON=junk_session') 'junk session skipped'
+} finally {
+  Remove-Item -LiteralPath $fixRepo -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 # theater-server source still has the bridge
