@@ -122,7 +122,7 @@ Notes: Gate before arm soak
   test-showtime failed=0.
 Commit: 66fd810
 
-## SC-07 — Arm soak: run this ledger under Show Time (CLAW watch)  [pending]
+## SC-07 — Arm soak: run this ledger under Show Time (CLAW watch)  [done]
 **Only after SC-06 green and user keeps Approved: yes.**
 Arm this skill root with launch-showtime (or board Approve).
 Leave CLAW open as theater; flip MAP occasionally.
@@ -131,6 +131,13 @@ DONE (machine): autopro runner reaches ledger with only SC-07+ done or final che
 DONE (human): you watched CLAW while MAP stayed honest; no twin-writer panic
 Files: live board; .claude/scratch/autopro.log
 Notes: FIRST arm of this epic — feature branch preferred if dirty; skill is already on master
+  2026-07-15: LIVE arm proven. Runner sess_dc06e995e926 armed 15:49:26 engine=claude
+  branch=master board=http://127.0.0.1:8770/ (Show Time zero git). Runner reached this
+  ledger with done=6 pending=2 → SC-07 first pending; this worker IS iter 2/10 spawned
+  for SC-07 = machine criterion met. Green bar re-run under armed soak: node --check
+  theater-server OK; test-worker-ownership ALL OK; test-legs-honesty ALL OK;
+  test-fleet-group ALL OK; prove-approve-arm-offline READY_CHECK=green
+  assertions_failed=0; test-showtime failed=0. Human CLAW/MAP watch = operator gate.
 Commit: —
 
 ## SC-08 — Handover + skill pointer for MAP honesty  [pending]
