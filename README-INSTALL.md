@@ -4,22 +4,28 @@ AutoPro is a Claude Code skill: after a ledger is approved, `/autopro` runs a ba
 drives it to completion, with an optional Show Time board. The scripts are cross-OS (Windows, macOS,
 Linux) — process control, paths, and worker resolution all branch on the OS.
 
-## One-command install
+## Install (one line — nothing to clone)
 
-**macOS / Linux** (no sudo — installs a user-space PowerShell 7 if you don't have one):
-```bash
-git clone <this-repo> autopro && cd autopro
-bash install.sh
-```
-
-**Windows** (PowerShell 7):
+**Windows** (PowerShell):
 ```powershell
-git clone <this-repo> autopro; cd autopro
-pwsh -NoProfile -File install.ps1
+irm https://raw.githubusercontent.com/danielsivyer4567/looplet-autopro-skill/master/get.ps1 | iex
 ```
 
-The installer copies the skill to `~/.claude/skills/autopro/` (backing up any existing copy to
-`~/.claude/autopro-backups/`) and makes sure `pwsh` is available.
+**macOS / Linux**:
+```bash
+curl -fsSL https://raw.githubusercontent.com/danielsivyer4567/looplet-autopro-skill/master/get.sh | bash
+```
+
+That's it. The bootstrapper downloads the skill, copies it to `~/.claude/skills/autopro/` (backing
+up any existing copy to `~/.claude/autopro-backups/`), and makes sure PowerShell 7 is available
+(installs it user-space, no sudo, on Mac/Linux if missing).
+
+### Prefer to clone first?
+```bash
+git clone https://github.com/danielsivyer4567/looplet-autopro-skill.git autopro && cd autopro
+bash install.sh          # macOS / Linux
+pwsh -NoProfile -File install.ps1   # Windows
+```
 
 ## Requirements
 
