@@ -61,7 +61,7 @@ resolution all branch on the OS. Two things must be true on the host:
    usually **absent on a fresh macOS/Linux**, where the first `pwsh` call would fail with
    `command not found`. Ensure it first (no sudo, user-space):
    ```bash
-   bash "$HOME/.claude/skills/autopro/scripts/ensure-pwsh.sh"    # prints the pwsh path, installs if missing
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/ensure-pwsh.sh"    # prints the pwsh path, installs if missing
    ```
    On Windows, `pwsh` is normally already present (`winget install Microsoft.PowerShell` if not).
 2. **At least one worker CLI on PATH** — `claude` / `codex` / `gemini` / `grok` (or `ollama`,
@@ -79,7 +79,7 @@ Everywhere below, `$HOME` resolves to the user's home on all three OSes (pwsh se
 2. **Arm + Show Time + launch** (run from the repo, on the branch you want the work on):
 
    ```powershell
-   $skill = Join-Path $HOME '.claude/skills/autopro/scripts'   # $HOME works on Windows + macOS + Linux
+   $skill = '${CLAUDE_PLUGIN_ROOT}/scripts'   # auto-resolved to the plugin dir; the one-liner installer rewrites this token
    $root  = '<YOUR-REPO-ROOT>'   # scratch + flag root
    $repo  = $root                                  # ledger lives here
    & pwsh -NoProfile -File (Join-Path $skill 'launch-showtime.ps1') `
@@ -181,11 +181,11 @@ exits — so the board still looks “on”.
 
 ```powershell
 # One repo
-pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/stop-autopro.ps1" `
+pwsh -NoProfile -File "${CLAUDE_PLUGIN_ROOT}/scripts/stop-autopro.ps1" `
   -Root '<YOUR-REPO-ROOT>'
 
 # Everything on this machine
-pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/stop-autopro.ps1" -All
+pwsh -NoProfile -File "${CLAUDE_PLUGIN_ROOT}/scripts/stop-autopro.ps1" -All
 ```
 
 Soft-only (wait for current slice, no process kill):
@@ -230,13 +230,13 @@ Remove-Item -LiteralPath '<Root>/.claude/scratch/autopro-on' -Force -ErrorAction
 ## Tests
 
 ```powershell
-pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/test-showtime.ps1"
+pwsh -NoProfile -File "${CLAUDE_PLUGIN_ROOT}/scripts/test-showtime.ps1"
 ```
 
 ## Multi-host install (Cursor / Claude Desktop / Antigravity / Codex / ChatGPT)
 
 `powershell
-pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/install-hosts.ps1" `
+pwsh -NoProfile -File "${CLAUDE_PLUGIN_ROOT}/scripts/install-hosts.ps1" `
   -RepoDir "<YOUR-REPO-ROOT>"
 `
 

@@ -5,11 +5,12 @@
 set -euo pipefail
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
+SKILLSRC="$SRC/plugins/autopro"          # the skill lives inside the plugin dir
 DEST="$HOME/.claude/skills/autopro"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
-if [ ! -f "$SRC/SKILL.md" ]; then
-  echo "install.sh: run me from the AutoPro package dir (SKILL.md not found next to me)." >&2
+if [ ! -f "$SKILLSRC/SKILL.md" ]; then
+  echo "install.sh: run me from the AutoPro package dir (plugins/autopro/SKILL.md not found)." >&2
   exit 1
 fi
 
@@ -22,9 +23,10 @@ if [ -e "$DEST" ]; then
 fi
 
 mkdir -p "$DEST"
-cp -a "$SRC/SKILL.md" "$DEST"/
+# Copy SKILL.md, rewriting the plugin-root placeholder to the actual install dir (non-plugin install).
+sed "s|\${CLAUDE_PLUGIN_ROOT}|$DEST|g" "$SKILLSRC/SKILL.md" > "$DEST/SKILL.md"
 for d in scripts references theater; do
-  [ -e "$SRC/$d" ] && cp -a "$SRC/$d" "$DEST"/
+  [ -e "$SKILLSRC/$d" ] && cp -a "$SKILLSRC/$d" "$DEST"/
 done
 chmod +x "$DEST"/scripts/*.sh 2>/dev/null || true
 echo "AutoPro skill installed -> $DEST"

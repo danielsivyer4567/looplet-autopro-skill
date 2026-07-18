@@ -5,11 +5,12 @@
 #>
 $ErrorActionPreference = 'Stop'
 $src = $PSScriptRoot
+$skillSrc = Join-Path $src 'plugins/autopro'          # the skill lives inside the plugin dir
 $dest = Join-Path $HOME '.claude/skills/autopro'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 
-if (-not (Test-Path -LiteralPath (Join-Path $src 'SKILL.md'))) {
-  throw 'install.ps1: run me from the AutoPro package dir (SKILL.md not found next to me).'
+if (-not (Test-Path -LiteralPath (Join-Path $skillSrc 'SKILL.md'))) {
+  throw 'install.ps1: run me from the AutoPro package dir (plugins/autopro/SKILL.md not found).'
 }
 
 if (Test-Path -LiteralPath $dest) {
@@ -22,9 +23,11 @@ if (Test-Path -LiteralPath $dest) {
 }
 
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
-Copy-Item -LiteralPath (Join-Path $src 'SKILL.md') -Destination $dest -Force
+# Copy SKILL.md, rewriting the plugin-root placeholder to the actual install dir (non-plugin install).
+$skillMd = [IO.File]::ReadAllText((Join-Path $skillSrc 'SKILL.md')).Replace('${CLAUDE_PLUGIN_ROOT}', $dest)
+[IO.File]::WriteAllText((Join-Path $dest 'SKILL.md'), $skillMd)
 foreach ($d in @('scripts', 'references', 'theater')) {
-  $p = Join-Path $src $d
+  $p = Join-Path $skillSrc $d
   if (Test-Path -LiteralPath $p) { Copy-Item -LiteralPath $p -Destination $dest -Recurse -Force }
 }
 Write-Host "AutoPro skill installed -> $dest"

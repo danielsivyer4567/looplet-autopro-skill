@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "looplet-autopro-skill",
+  "version": "1.0.0",
+  "description": "AutoPro — autonomous ledger runner with the Show Time visual board for Claude Code (Windows/macOS/Linux).",
+  "owner": {
+    "name": "danielsivyer4567",
+    "email": "danielsivyer4567@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "autopro",
+      "description": "Autonomous ledger execution with the Show Time visual board. After a ledger is approved, runs every remaining slice as its own fresh worker session. Cross-OS.",
+      "version": "1.0.0",
+      "source": "./plugins/autopro",
+      "category": "productivity",
+      "author": {
+        "name": "danielsivyer4567",
+        "email": "danielsivyer4567@users.noreply.github.com"
+      },
+      "homepage": "https://github.com/danielsivyer4567/looplet-autopro-skill",
+      "keywords": ["automation", "ledger", "workflow", "looplet", "showtime"]
+    }
+  ]
+}
