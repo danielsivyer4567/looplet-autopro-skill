@@ -79,16 +79,20 @@ if ($env:USERPROFILE) {
 }
 
 # ---- 4) source hygiene: no functional backslash paths, no unguarded USERPROFILE in core ----
+# The ultra-mode scripts (launch-ultra / autopro-ultra / showtime-board-gate) are optional and are
+# NOT part of the distributed core — a clean install won't have them. Scan whatever IS present.
 $core = 'launch-showtime.ps1','autopro-runner.ps1','theater-register.ps1','autopro-status.ps1',
         'stop-autopro.ps1','launch-ultra.ps1','showtime-status.ps1','showtime-board-gate.ps1','autopro-ultra.ps1'
-$bs = 0; $up = 0
+$bs = 0; $up = 0; $scanned = 0
 foreach ($f in $core) {
   $p = Join-Path $Scripts $f
+  if (-not (Test-Path -LiteralPath $p)) { continue }
+  $scanned++
   $bs += @(Select-String -Path $p -Pattern "(Join-Path|Test-Path|-LiteralPath|Get-ChildItem|Get-Content|Set-Content|New-Item).*(\.claude|scratch|autopro-theater)[^'`"]*\\" -AllMatches).Count
   $up += @(Select-String -Path $p -Pattern '\$env:USERPROFILE' -AllMatches | Where-Object { $_.Line -notmatch '\?\?\s*\$HOME' }).Count
 }
-if ($bs -eq 0) { Ok 'source: 0 functional backslash paths in core scripts' } else { Bad ("source: {0} backslash-path lines remain" -f $bs) }
-if ($up -eq 0) { Ok 'source: 0 unguarded $env:USERPROFILE in core scripts' } else { Bad ("source: {0} unguarded USERPROFILE" -f $up) }
+if ($bs -eq 0) { Ok ("source: 0 functional backslash paths ({0} core scripts scanned)" -f $scanned) } else { Bad ("source: {0} backslash-path lines remain" -f $bs) }
+if ($up -eq 0) { Ok ("source: 0 unguarded `$env:USERPROFILE ({0} core scripts scanned)" -f $scanned) } else { Bad ("source: {0} unguarded USERPROFILE" -f $up) }
 
 Write-Output ''
 if ($fail -eq 0) { Write-Output '==== ALL PASS ====' } else { Write-Output ("==== $fail FAILED ====") ; exit 1 }
