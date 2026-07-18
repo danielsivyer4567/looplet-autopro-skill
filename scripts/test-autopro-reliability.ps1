@@ -113,9 +113,12 @@ if ($launchSrc -match "runnerArgParts \+= '-NoShowTime'" -or $launchSrc -match "
 if ($launchSrc -match 'HEADLESS=1') { Ok 'headless: prints HEADLESS=1' } else { Bad 'headless: HEADLESS marker missing' }
 
 # ---- P1-T3/T4: detach + boot liveness ----------------------------------------
-if ($launchSrc -match 'Win32_Process' -and $launchSrc -match 'Create') {
-  Ok 'detach: Win32_Process.Create path'
-} else { Bad 'detach: Win32_Process.Create missing' }
+# Detach now routes through the cross-OS helper (Windows = same Win32_Process.Create underneath).
+$procSrc = Get-Content -LiteralPath (Join-Path $Scripts 'proc-crossos.ps1') -Raw
+if ($launchSrc -match 'Start-DetachedProcess' -and
+    $procSrc -match 'Win32_Process' -and $procSrc -match 'Create') {
+  Ok 'detach: Start-DetachedProcess (Win32_Process.Create on Windows)'
+} else { Bad 'detach: cross-OS detach path missing' }
 if ($launchSrc -match 'function Quote-Arg') { Ok 'detach: Quote-Arg for ledger titles' } else { Bad 'detach: Quote-Arg missing' }
 if ($launchSrc -match 'BOOT_WAIT' -and $launchSrc -match 'BOOT_OK=armed' -and $launchSrc -match 'BOOT_FAIL') {
   Ok 'boot: launch waits for armed: / fails closed'

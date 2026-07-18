@@ -35,15 +35,36 @@ function Get-AutoproAutoOrder {
   return @($script:AutoproAutoOrderDefault)
 }
 
+# pwsh 7 automatic; on Windows PowerShell 5.1 it's undefined → treat as Windows.
+$script:AutoproEnginesOnWindows = ($null -eq $IsWindows) -or $IsWindows
+
+# Null-safe Join-Path: the Windows exe-search roots ($env:ProgramFiles, $env:APPDATA, …) are $null on
+# Unix, and Join-Path throws on a null root. Returns $null so the caller's `if ($cand -and …)` skips it.
+function Join-WinRoot([string]$Root, [string]$Child) {
+  if ([string]::IsNullOrEmpty($Root)) { return $null }
+  return (Join-Path $Root $Child)
+}
+
+# Cross-OS PATH lookup for the Unix branches: return the first name that resolves to a real file.
+function Resolve-CliByName([string[]]$Names) {
+  foreach ($n in $Names) {
+    $c = Get-Command $n -ErrorAction SilentlyContinue
+    if ($c -and $c.Source -and (Test-Path -LiteralPath $c.Source)) { return $c.Source }
+  }
+  return $null
+}
+
 function Get-NodeExe {
+  # Unix: PATH node (extensionless); the .exe-only checks below are a Windows shim-avoidance concern.
+  if (-not $script:AutoproEnginesOnWindows) { return (Resolve-CliByName -Names @('node')) }
   $c = Get-Command node.exe -ErrorAction SilentlyContinue
   if ($c -and $c.Source -and (Test-Path -LiteralPath $c.Source)) { return $c.Source }
   $c2 = Get-Command node -ErrorAction SilentlyContinue
   if ($c2 -and $c2.Source -and ($c2.Source -match '\.exe$') -and (Test-Path -LiteralPath $c2.Source)) { return $c2.Source }
   foreach ($cand in @(
-      (Join-Path $env:ProgramFiles 'nodejs\node.exe'),
-      (Join-Path ${env:ProgramFiles(x86)} 'nodejs\node.exe'),
-      (Join-Path $env:LOCALAPPDATA 'Programs\node\node.exe')
+      (Join-WinRoot $env:ProgramFiles 'nodejs\node.exe'),
+      (Join-WinRoot ${env:ProgramFiles(x86)} 'nodejs\node.exe'),
+      (Join-WinRoot $env:LOCALAPPDATA 'Programs\node\node.exe')
     )) {
     if ($cand -and (Test-Path -LiteralPath $cand)) { return $cand }
   }
@@ -55,12 +76,25 @@ function Resolve-NpmPackageJs {
     [Parameter(Mandatory = $true)][string]$Package,
     [Parameter(Mandatory = $true)][string]$RelativeBin
   )
+  # Unix: locate the global node_modules via `npm root -g` (portable across distros/managers).
+  if (-not $script:AutoproEnginesOnWindows) {
+    $gRoot = ''
+    try { $gRoot = ([string](& npm root -g 2>$null | Select-Object -First 1)).Trim() } catch {}
+    # Only join a value that is actually a directory — a broken/aliased npm can echo a non-path
+    # string, and Join-Path would treat a "word:" prefix as a drive and throw.
+    if ($gRoot -and (Test-Path -LiteralPath $gRoot -PathType Container)) {
+      $full = Join-Path $gRoot (Join-Path $Package $RelativeBin)
+      if (Test-Path -LiteralPath $full) { return $full }
+    }
+    return $null
+  }
   $roots = @(
-    (Join-Path $env:APPDATA 'npm\node_modules'),
-    (Join-Path $env:LOCALAPPDATA 'npm\node_modules'),
-    (Join-Path $env:ProgramFiles 'nodejs\node_modules')
+    (Join-WinRoot $env:APPDATA 'npm\node_modules'),
+    (Join-WinRoot $env:LOCALAPPDATA 'npm\node_modules'),
+    (Join-WinRoot $env:ProgramFiles 'nodejs\node_modules')
   )
   foreach ($root in $roots) {
+    if (-not $root) { continue }
     $full = Join-Path $root (Join-Path $Package $RelativeBin)
     if (Test-Path -LiteralPath $full) { return $full }
   }
@@ -69,10 +103,12 @@ function Resolve-NpmPackageJs {
 
 function Resolve-ClaudeExe {
   <# Prefer real claude.exe — never npm's claude.ps1 / claude.cmd shims. #>
+  # Unix: the shim problem is Windows-only; take PATH `claude` (a real binary there).
+  if (-not $script:AutoproEnginesOnWindows) { return (Resolve-CliByName -Names @('claude')) }
   $candidates = @(
-    (Join-Path $env:USERPROFILE '.local\bin\claude.exe'),
-    (Join-Path $env:APPDATA 'npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe'),
-    (Join-Path $env:LOCALAPPDATA 'npm\claude.exe')
+    (Join-WinRoot $env:USERPROFILE '.local\bin\claude.exe'),
+    (Join-WinRoot $env:APPDATA 'npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe'),
+    (Join-WinRoot $env:LOCALAPPDATA 'npm\claude.exe')
   )
   foreach ($cand in $candidates) {
     if ($cand -and (Test-Path -LiteralPath $cand) -and ($cand -match '\.exe$')) { return $cand }
@@ -85,9 +121,11 @@ function Resolve-ClaudeExe {
 }
 
 function Resolve-GrokExe {
+  # Unix: PATH `grok` (extensionless).
+  if (-not $script:AutoproEnginesOnWindows) { return (Resolve-CliByName -Names @('grok')) }
   $candidates = @(
-    (Join-Path $env:USERPROFILE '.grok\bin\grok.exe'),
-    (Join-Path $env:LOCALAPPDATA 'Programs\grok\grok.exe')
+    (Join-WinRoot $env:USERPROFILE '.grok\bin\grok.exe'),
+    (Join-WinRoot $env:LOCALAPPDATA 'Programs\grok\grok.exe')
   )
   foreach ($cand in $candidates) {
     if ($cand -and (Test-Path -LiteralPath $cand)) { return $cand }
@@ -102,9 +140,11 @@ function Resolve-GrokExe {
 }
 
 function Resolve-OllamaExe {
+  # Unix: PATH `ollama` (extensionless).
+  if (-not $script:AutoproEnginesOnWindows) { return (Resolve-CliByName -Names @('ollama')) }
   $candidates = @(
-    (Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'),
-    (Join-Path $env:ProgramFiles 'Ollama\ollama.exe')
+    (Join-WinRoot $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'),
+    (Join-WinRoot $env:ProgramFiles 'Ollama\ollama.exe')
   )
   foreach ($cand in $candidates) {
     if ($cand -and (Test-Path -LiteralPath $cand)) { return $cand }

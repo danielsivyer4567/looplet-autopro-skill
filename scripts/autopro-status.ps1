@@ -28,10 +28,12 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $skillScripts = $PSScriptRoot
-$stateRoot = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater'
+$stateRoot = Join-Path ($env:USERPROFILE ?? $HOME) '.claude/scratch/autopro-theater'
 $portFile = Join-Path $stateRoot 'server.port'
 $tokenFile = Join-Path $stateRoot 'server.token'
 $sessionDir = Join-Path $stateRoot 'sessions'
+# Cross-platform process enumeration (Windows path is the same CIM query as before).
+. (Join-Path $PSScriptRoot 'proc-crossos.ps1')
 
 function Get-BoardPort {
   $port = 8770
@@ -83,7 +85,7 @@ function Test-Board {
 function Get-Runners {
   $list = [System.Collections.Generic.List[object]]::new()
   try {
-    $procs = Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" -ErrorAction SilentlyContinue |
+    $procs = Get-AutoproProcessList -Names @('pwsh', 'powershell') |
       Where-Object { $_.CommandLine -and $_.CommandLine -match 'autopro-runner\.ps1' }
     foreach ($p in @($procs)) {
       $cmd = [string]$p.CommandLine
@@ -122,7 +124,7 @@ function Test-PidAlive([object]$pidVal) {
 }
 
 function Get-LedgerSnap([string]$dir) {
-  $ledger = Join-Path $dir '.claude\scratch\ledger.md'
+  $ledger = Join-Path $dir '.claude/scratch/ledger.md'
   $title = ''
   $approved = 'no'
   $done = 0; $pending = 0; $inprog = 0; $blocked = 0
@@ -250,8 +252,8 @@ function Find-Roots {
       'C:\repos\looplet webb app\looplet crm'
     )) {
     if (Test-Path -LiteralPath $guess) {
-      $hasLedger = Test-Path (Join-Path $guess '.claude\scratch\ledger.md')
-      $hasFlag = @(Get-ChildItem (Join-Path $guess '.claude\scratch') -Filter 'autopro-on*' -EA SilentlyContinue).Count -gt 0
+      $hasLedger = Test-Path (Join-Path $guess '.claude/scratch/ledger.md')
+      $hasFlag = @(Get-ChildItem (Join-Path $guess '.claude/scratch') -Filter 'autopro-on*' -EA SilentlyContinue).Count -gt 0
       if ($hasLedger -or $hasFlag) {
         [void]$found.Add((Resolve-Path -LiteralPath $guess).Path)
       }
@@ -262,7 +264,7 @@ function Find-Roots {
 }
 
 function Get-ArmedFlags([string]$root) {
-  $scratch = Join-Path $root '.claude\scratch'
+  $scratch = Join-Path $root '.claude/scratch'
   if (-not (Test-Path -LiteralPath $scratch)) { return @() }
   return @(Get-ChildItem -LiteralPath $scratch -Filter 'autopro-on*' -File -ErrorAction SilentlyContinue)
 }
@@ -344,7 +346,7 @@ foreach ($root in $roots) {
   } | Select-Object -First 1
 
   # Reconcile autopro-session.json: never claim healthy running when PID is dead.
-  $sessionFile = Join-Path $prim '.claude\scratch\autopro-session.json'
+  $sessionFile = Join-Path $prim '.claude/scratch/autopro-session.json'
   $sessObj = $null
   if (Test-Path -LiteralPath $sessionFile) {
     try { $sessObj = Get-Content -LiteralPath $sessionFile -Raw | ConvertFrom-Json } catch { $sessObj = $null }

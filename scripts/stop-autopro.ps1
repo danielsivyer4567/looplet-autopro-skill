@@ -31,6 +31,8 @@ if ($KeepWorkers) { $KeepClaude = $true }
 $ErrorActionPreference = 'Continue'
 $enginesPs1 = Join-Path $PSScriptRoot 'worker-engines.ps1'
 if (Test-Path -LiteralPath $enginesPs1) { . $enginesPs1 }
+# Cross-platform process enumeration + tree-kill (Windows path is the same CIM/taskkill as before).
+. (Join-Path $PSScriptRoot 'proc-crossos.ps1')
 
 function Say([string]$m) {
   if (-not $Quiet) { Write-Output $m }
@@ -87,7 +89,7 @@ Say '==== stop-autopro ===='
 # 1) Flags (bare legacy 'autopro-on' plus per-session 'autopro-on.<sessionId>')
 $flagsRemoved = 0
 foreach ($r in $roots) {
-  $found = @(Get-ChildItem -Path (Join-Path $r '.claude\scratch\autopro-on*') -File -ErrorAction SilentlyContinue)
+  $found = @(Get-ChildItem -Path (Join-Path $r '.claude/scratch/autopro-on*') -File -ErrorAction SilentlyContinue)
   if ($SessionId) { $found = @($found | Where-Object { $_.Name -eq 'autopro-on' -or $_.Name -eq "autopro-on.$SessionId" }) }
   if ($found.Count) {
     foreach ($f in $found) {
@@ -96,13 +98,12 @@ foreach ($r in $roots) {
       $flagsRemoved++
     }
   } else {
-    Say "FLAG_ABSENT=$r\.claude\scratch\autopro-on*"
+    Say "FLAG_ABSENT=$r\.claude/scratch/autopro-on*"
   }
 }
 
 # 2) Find runners matching those roots (or any runner if -All)
-$runners = Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" `
-  -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
+$runners = Get-AutoproProcessList -Names @('pwsh', 'powershell') |
   Where-Object { $_.CommandLine -and $_.CommandLine -match 'autopro-runner\.ps1' }
 
 $killedRunners = @()
@@ -110,20 +111,11 @@ foreach ($proc in $runners) {
   if (-not (Test-ProcMatch $proc)) { continue }
 
   Say "KILL_RUNNER PID=$($proc.ProcessId)"
-  try {
-    # Kill process tree first; children include claude -p when parent still owns them.
-    $taskkillOut = & taskkill.exe /PID $proc.ProcessId /T /F 2>&1
-    $taskkillExit = $LASTEXITCODE
-    $taskkillOut | ForEach-Object { Say "  $_" }
-    if ($taskkillExit -ne 0) { throw "taskkill exit $taskkillExit" }
+  # Kill the tree — children include `claude -p` while the parent still owns them.
+  if (Stop-ProcessTree -Id $proc.ProcessId) {
     $killedRunners += $proc.ProcessId
-  } catch {
-    try {
-      Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop
-      $killedRunners += $proc.ProcessId
-    } catch {
-      Say "  warn: could not kill $($proc.ProcessId): $($_.Exception.Message)"
-    }
+  } else {
+    Say "  warn: could not kill $($proc.ProcessId)"
   }
 }
 
@@ -141,33 +133,29 @@ function Test-IsWorkerProc($proc) {
 if (-not $KeepClaude) {
   # Also kill PIDs recorded by runner (autopro-worker.pid)
   foreach ($r in $roots) {
-    $pidFile = Join-Path $r '.claude\scratch\autopro-worker.pid'
+    $pidFile = Join-Path $r '.claude/scratch/autopro-worker.pid'
     if (Test-Path -LiteralPath $pidFile) {
       $wp = 0
       try { $wp = [int]((Get-Content -LiteralPath $pidFile -Raw).Trim()) } catch {}
       if ($wp -gt 0) {
         Say "KILL_WORKER_PIDFILE PID=$wp root=$r"
-        try { & taskkill.exe /PID $wp /T /F 2>&1 | Out-Null } catch {}
-        try { Stop-Process -Id $wp -Force -ErrorAction SilentlyContinue } catch {}
+        [void](Stop-ProcessTree -Id $wp)
       }
       Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
     }
   }
 
-  # Prefer filtered queries — unfiltered Win32_Process enumerations hang on busy machines.
+  # Prefer filtered queries — unfiltered enumerations hang on busy machines. The name set covers
+  # every worker CLI plus their likely parent (the runner is pwsh); Test-IsWorkerProc does the
+  # real filtering on the command line, cross-OS.
   $workers = @(
-    Get-CimInstance Win32_Process -Filter "Name='claude.exe' OR Name='node.exe' OR Name='grok.exe' OR Name='ollama.exe' OR Name='codex.exe'" `
-      -OperationTimeoutSec 8 -ErrorAction SilentlyContinue
-  ) + @(
-    # Codex real worker is often codex.exe under node; also catch gemini via node cmdline
-    Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe' OR Name='node.exe'" `
-      -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
-      Where-Object { $_.CommandLine -and (Test-IsWorkerProc $_) }
+    Get-AutoproProcessList -Names @('claude', 'node', 'grok', 'ollama', 'codex', 'pwsh', 'powershell') |
+      Where-Object { $_.CommandLine -and (Test-IsWorkerProc $_) } |
+      Sort-Object ProcessId -Unique
   )
-  $workers = @($workers | Where-Object { $_ -and (Test-IsWorkerProc $_) } | Sort-Object ProcessId -Unique)
   foreach ($c in $workers) {
-    $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($c.ParentProcessId)" `
-      -OperationTimeoutSec 3 -ErrorAction SilentlyContinue
+    # Look the parent up by PID (any process, not just worker-type) so a live runner parent is seen.
+    $parent = Get-AutoproProcessById -Id $c.ParentProcessId
     $orphan = -not $parent
     $parentIsRunner = $parent -and $parent.CommandLine -match 'autopro-runner' -and (Test-ProcMatch $parent)
     $safeOrphanMatch = $All
@@ -180,8 +168,7 @@ if (-not $KeepClaude) {
     }
     if ($parentIsRunner -or $safeOrphanMatch) {
       Say "KILL_WORKER PID=$($c.ProcessId) orphan=$orphan name=$($c.Name)"
-      try { Stop-Process -Id $c.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
-      try { & taskkill.exe /PID $c.ProcessId /T /F 2>&1 | Out-Null } catch {}
+      [void](Stop-ProcessTree -Id $c.ProcessId)
     } elseif ($orphan) {
       Say "SKIP_ORPHAN_WORKER_UNSCOPED PID=$($c.ProcessId)"
     }
@@ -190,7 +177,7 @@ if (-not $KeepClaude) {
 
 # 4) Handovers + wipe dead/complete lanes off the board (processes already killed)
 try {
-  $portFile = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater\server.port'
+  $portFile = Join-Path ($env:USERPROFILE ?? $HOME) '.claude/scratch/autopro-theater/server.port'
   $port = 8770
   if (Test-Path -LiteralPath $portFile) {
     $p = (Get-Content -LiteralPath $portFile -Raw).Trim()
@@ -200,7 +187,7 @@ try {
   $bodyObj = @{ staleAfterMs = 0; wipeComplete = $true }
   if ($LedgerHash) { $bodyObj.ledgerHash = $LedgerHash }
   $body = $bodyObj | ConvertTo-Json -Compress
-  $tokFile = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater\server.token'
+  $tokFile = Join-Path ($env:USERPROFILE ?? $HOME) '.claude/scratch/autopro-theater/server.token'
   $tok = if (Test-Path -LiteralPath $tokFile) { (Get-Content -LiteralPath $tokFile -Raw).Trim() } else { '' }
   $pre = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/preflight" -Method POST -ContentType 'application/json' -Headers @{ 'X-Showtime-Token' = $tok } -Body $body -TimeoutSec 5
   Say ("BOARD_PREFLIGHT wiped={0} handoversFlushed={1}" -f @($pre.wiped).Count, $pre.handoversFlushed)
@@ -211,11 +198,9 @@ try {
 
 # 5) Verify
 Start-Sleep -Milliseconds 400
-$stillRunners = @(Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" `
-  -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
+$stillRunners = @(Get-AutoproProcessList -Names @('pwsh', 'powershell') |
   Where-Object { $_.CommandLine -and $_.CommandLine -match 'autopro-runner\.ps1' -and (Test-ProcMatch $_) })
-$stillWorkers = @(Get-CimInstance Win32_Process -Filter "Name='claude.exe' OR Name='node.exe' OR Name='grok.exe' OR Name='ollama.exe'" `
-  -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
+$stillWorkers = @(Get-AutoproProcessList -Names @('claude', 'node', 'grok', 'ollama', 'codex') |
   Where-Object { (Test-IsWorkerProc $_) -and (Test-ClaudeMatch $_) })
 
 Say ''

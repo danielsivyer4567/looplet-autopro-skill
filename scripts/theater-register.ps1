@@ -37,10 +37,12 @@ param(
 $ErrorActionPreference = 'Stop'
 # .../autopro/scripts -> skill root is parent
 $SkillRoot = Split-Path $PSScriptRoot -Parent
-$ServerJs = Join-Path $SkillRoot 'scripts\theater-server.mjs'
-$StateRoot = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater'
+$ServerJs = Join-Path $SkillRoot 'scripts/theater-server.mjs'
+$StateRoot = Join-Path ($env:USERPROFILE ?? $HOME) '.claude/scratch/autopro-theater'
 $PortFile = Join-Path $StateRoot 'server.port'
 $PreferredPort = 8770
+# Cross-platform detached spawn (Windows path is the same Win32_Process.Create as before).
+. (Join-Path $PSScriptRoot 'proc-crossos.ps1')
 
 function Get-ShowTimeBaseUrl {
   if (Test-Path -LiteralPath $PortFile) {
@@ -70,13 +72,10 @@ function Start-ShowTimeServer {
   $cmdLine = '"{0}" "{1}"' -f $node.Source, $ServerJs
   $started = $false
   try {
-    $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-      CommandLine      = $cmdLine
-      CurrentDirectory = $SkillRoot
-    }
+    $created = Start-DetachedProcess -CommandLine $cmdLine -CurrentDirectory $SkillRoot
     if ($created.ReturnValue -eq 0 -and $created.ProcessId) {
       Write-Output ("SHOWTIME_PID={0}" -f $created.ProcessId)
-      Write-Output 'SHOWTIME_DETACH=Win32_Process.Create'
+      Write-Output ("SHOWTIME_DETACH={0}" -f $created.How)
       $started = $true
     }
   } catch {
@@ -114,7 +113,7 @@ function Start-ShowTimeServer {
 }
 
 function Get-ShowTimeToken {
-  $tf = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater\server.token'
+  $tf = Join-Path ($env:USERPROFILE ?? $HOME) '.claude/scratch/autopro-theater/server.token'
   if (Test-Path -LiteralPath $tf) { return (Get-Content -LiteralPath $tf -Raw).Trim() }
   return ''
 }
@@ -194,10 +193,10 @@ switch ($Action) {
     if (-not $SessionId) { throw 'SessionId required for request-join' }
     $u = Start-ShowTimeServer
     if (-not $LedgerPath -and $RepoDir) {
-      $LedgerPath = Join-Path $RepoDir '.claude\scratch\ledger.md'
+      $LedgerPath = Join-Path $RepoDir '.claude/scratch/ledger.md'
     }
     if (-not $LogPath -and $Root) {
-      $LogPath = Join-Path $Root '.claude\scratch\autopro.log'
+      $LogPath = Join-Path $Root '.claude/scratch/autopro.log'
     }
     if (-not $Branch) { $Branch = Get-GitBranch $RepoDir }
     if (-not $Branch) { $Branch = Get-GitBranch (Split-Path $RepoDir -Parent) }
@@ -338,10 +337,10 @@ switch ($Action) {
     if (-not $SessionId) { throw 'SessionId required for register (join gate)' }
     $u = Start-ShowTimeServer
     if (-not $LedgerPath -and $RepoDir) {
-      $LedgerPath = Join-Path $RepoDir '.claude\scratch\ledger.md'
+      $LedgerPath = Join-Path $RepoDir '.claude/scratch/ledger.md'
     }
     if (-not $LogPath -and $Root) {
-      $LogPath = Join-Path $Root '.claude\scratch\autopro.log'
+      $LogPath = Join-Path $Root '.claude/scratch/autopro.log'
     }
     if (-not $Branch) { $Branch = Get-GitBranch $RepoDir }
     if (-not $Branch) { $Branch = Get-GitBranch (Split-Path $RepoDir -Parent) }
@@ -423,6 +422,21 @@ switch ($Action) {
       # After approve, session may already exist from approveJoinRequest
       Write-Output ("REGISTER_WARN={0}" -f $_.Exception.Message)
     }
+
+    # P0 fail-closed: unattended OpenRegister must leave a listable board lane.
+    if ($OpenRegister) {
+      . (Join-Path $PSScriptRoot 'showtime-board-gate.ps1')
+      $gate = Assert-BoardSessionRegistered -SessionId $SessionId -RepoPath $RepoDir `
+        -Branch $Branch -LedgerPath $LedgerPath -LedgerTitle $LedgerTitle `
+        -LedgerHash $LedgerHash -LogPath $LogPath -RunnerPid $RunnerPid `
+        -AllowAutoApprove -RegisterBody $body -Retries 4
+      if (-not $gate.ok) {
+        Write-Output "BOARD_GATE_FAIL=$($gate.error)"
+        throw $gate.error
+      }
+      Write-Output ("BOARD_GATE_OK healed={0}" -f $(if ($gate.healed) { 'true' } else { 'false' }))
+    }
+
     if ($OpenBrowser) { Open-BoardUrl "$u/" }
     Write-Output "SHOWTIME_URL=$u/"
     Write-Output "SESSION_ID=$SessionId"

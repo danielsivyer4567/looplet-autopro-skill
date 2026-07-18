@@ -30,7 +30,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$scratch = Join-Path $RepoDir '.claude\scratch'
+$scratch = Join-Path $RepoDir '.claude/scratch'
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 $statusPath = Join-Path $scratch 'SHOWTIME-STATUS.md'
 $eventsPath = Join-Path $scratch 'SHOWTIME-STATUS.events.jsonl'
@@ -171,7 +171,7 @@ function Write-StatusFile {
     [void]$sb.AppendLine('- _(none logged yet — append with `-Action event -Level server`)_')
     # Prefer live port from server.port; avoid a second hard-coded URL that drifts from the TV card.
     $boardHint = 'Show Time board: (start via launch-showtime / theater-server — URL on TV card + SHOWTIME_URL)'
-    $portFile = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater\server.port'
+    $portFile = Join-Path ($env:USERPROFILE ?? $HOME) '.claude/scratch/autopro-theater/server.port'
     if (Test-Path -LiteralPath $portFile) {
       $p = (Get-Content -LiteralPath $portFile -Raw).Trim()
       if ($p -match '^\d+$') { $boardHint = "Show Time board: ``http://127.0.0.1:$p/``" }

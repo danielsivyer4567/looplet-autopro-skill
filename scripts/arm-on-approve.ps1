@@ -94,9 +94,11 @@ function Log([string]$m) {
   Write-Output $line
 }
 
+# Cross-platform process enumeration (Windows path is the same CIM query as before).
+. (Join-Path $PSScriptRoot 'proc-crossos.ps1')
+
 function Get-LiveRunnerPids([string]$rootPath) {
-  @(Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" `
-      -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
+  @(Get-AutoproProcessList -Names @('pwsh', 'powershell') |
     Where-Object {
       $_.CommandLine -and
       $_.CommandLine -match 'autopro-runner\.ps1' -and

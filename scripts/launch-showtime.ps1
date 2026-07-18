@@ -26,7 +26,7 @@ param(
   [switch]$AllowOllama,
   [switch]$NoBrowser,
   # Headless: skip theater ensure/register/open-board; still arm the runner.
-  # Watch via: Get-Content .claude\scratch\autopro.log -Wait
+  # Watch via: Get-Content .claude/scratch/autopro.log -Wait
   [switch]$NoShowTime,
   # Required together: unattended worker risk (engine-specific skip/yolo/bypass flags)
   [switch]$AllowDangerousSkipPermissions,
@@ -51,11 +51,13 @@ $Runner = Join-Path $SkillScripts 'autopro-runner.ps1'
 $Register = Join-Path $SkillScripts 'theater-register.ps1'
 $StatusPs1 = Join-Path $SkillScripts 'showtime-status.ps1'
 $StopAutoPro = Join-Path $SkillScripts 'stop-autopro.ps1'
-$scratch = Join-Path $Root '.claude\scratch'
-$ledger = Join-Path $RepoDir '.claude\scratch\ledger.md'
+$scratch = Join-Path $Root '.claude/scratch'
+$ledger = Join-Path $RepoDir '.claude/scratch/ledger.md'
 $sessionStatePath = Join-Path $scratch 'autopro-session.json'
 
 . (Join-Path $SkillScripts 'worker-engines.ps1')
+# Cross-platform process enumeration (Windows path is the same CIM query as before).
+. (Join-Path $SkillScripts 'proc-crossos.ps1')
 
 if (-not $AllowDangerousSkipPermissions -or -not $IAcceptUnattendedRisk) {
   throw @'
@@ -168,8 +170,7 @@ if (Test-Path -LiteralPath $sessionStatePath) {
 
 if ($allFlags.Count -and $priorState -and $priorState.ledgerHash -and $priorState.ledgerHash -ne $ledgerHash) {
   Write-Output ("NEW_LEDGER_DETECTED oldHash={0} oldTitle={1} newHash={2} newTitle={3}" -f $priorState.ledgerHash, $priorState.ledgerTitle, $ledgerHash, $ledgerTitle)
-  $runners = @(Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" `
-    -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
+  $runners = @(Get-AutoproProcessList -Names @('pwsh', 'powershell') |
     Where-Object {
       $_.CommandLine -and
       $_.CommandLine -match 'autopro-runner\.ps1' -and
@@ -204,8 +205,7 @@ if ($allFlags.Count -and $priorState -and $priorState.ledgerHash -and $priorStat
 # The old behavior warned and launched a second runner anyway — that is exactly
 # how three runners ended up racing one ledger. Refuse instead.
 if ($allFlags.Count) {
-  $liveRunners = @(Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" `
-    -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
+  $liveRunners = @(Get-AutoproProcessList -Names @('pwsh', 'powershell') |
     Where-Object { $_.CommandLine -and $_.CommandLine -match 'autopro-runner\.ps1' -and $_.CommandLine -like "*$Root*" })
   if ($liveRunners.Count) {
     $allFlags | ForEach-Object { Write-Output ("EXISTING_FLAG={0}" -f $_.Name) }
@@ -226,7 +226,7 @@ Write-Output "WORKDIR=$RepoDir (in-place — Show Time creates no worktree or br
 
 function Resolve-ShowTimeBoardUrl {
   # Single source of truth: server.port after ensure (fallback default 8770).
-  $portFile = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater\server.port'
+  $portFile = Join-Path ($env:USERPROFILE ?? $HOME) '.claude/scratch/autopro-theater/server.port'
   if (Test-Path -LiteralPath $portFile) {
     $p = (Get-Content -LiteralPath $portFile -Raw).Trim()
     if ($p -match '^\d+$') { return "http://127.0.0.1:$p/" }
@@ -257,7 +257,7 @@ function Ensure-LoopletCompanion {
     return
   }
   Write-Output 'COMPANION_ENSURE=starting'
-  $resolve = Join-Path $env:USERPROFILE '.claude\skills\looplet\scripts\resolve-and-run.mjs'
+  $resolve = Join-Path ($env:USERPROFILE ?? $HOME) '.claude/skills/looplet/scripts/resolve-and-run.mjs'
   $node = Get-Command node -ErrorAction SilentlyContinue
   if ($node -and (Test-Path -LiteralPath $resolve)) {
     try {
@@ -269,7 +269,7 @@ function Ensure-LoopletCompanion {
   } else {
     # Fallback: start companion-server directly from runtime state or well-known path
     $root = $null
-    $statePath = Join-Path $env:USERPROFILE '.claude\looplet-runtime.json'
+    $statePath = Join-Path ($env:USERPROFILE ?? $HOME) '.claude/looplet-runtime.json'
     if (Test-Path -LiteralPath $statePath) {
       try {
         $st = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
@@ -281,14 +281,14 @@ function Ensure-LoopletCompanion {
           $env:LOOPLET_COMPANION_ROOT,
           'C:\LOOPLET\ai-sidebar\companion-server'
         )) {
-        if ($c -and (Test-Path -LiteralPath (Join-Path $c 'src\index.js'))) { $root = $c; break }
+        if ($c -and (Test-Path -LiteralPath (Join-Path $c 'src/index.js'))) { $root = $c; break }
       }
     }
     if ($root -and $node) {
       try {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = $node.Source
-        $psi.Arguments = "`"$(Join-Path $root 'src\index.js')`""
+        $psi.Arguments = "`"$(Join-Path $root 'src/index.js')`""
         $psi.WorkingDirectory = $root
         $psi.UseShellExecute = $true
         $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
@@ -318,7 +318,7 @@ if (Test-Path -LiteralPath $StatusPs1) {
       ForEach-Object { Write-Output "status> $_" }
     & pwsh -NoProfile -File $StatusPs1 -RepoDir $RepoDir -Action event -SessionId $sessionId -Level info -Event "Launch Show Time · repo=$RepoDir · no git authority" -LedgerPath $ledger 2>&1 |
       ForEach-Object { Write-Output "status> $_" }
-    Write-Output "STATUS_LOG=$RepoDir\.claude\scratch\SHOWTIME-STATUS.md"
+    Write-Output "STATUS_LOG=$RepoDir\.claude/scratch/SHOWTIME-STATUS.md"
   } catch {
     Write-Output "status> warn: $($_.Exception.Message)"
   }
@@ -354,9 +354,8 @@ if (-not $NoShowTime) {
 
 # Runner scan is informational here; different-ledger stale cleanup above uses scoped stop-autopro.
 try {
-  # OperationTimeoutSec: bare Get-CimInstance Win32_Process can hang for minutes on busy WMI.
-  $runners = Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" `
-    -OperationTimeoutSec 8 -ErrorAction SilentlyContinue |
+  # Filtered enum (Windows CIM has OperationTimeoutSec inside the helper — bare enums hang on busy WMI).
+  $runners = Get-AutoproProcessList -Names @('pwsh', 'powershell') |
     Where-Object {
       $_.CommandLine -and
       $_.CommandLine -match 'autopro-runner\.ps1' -and
@@ -382,7 +381,7 @@ try {
 # Board API preflight: wipe complete/stale sessions + deliver pending handovers
 if (-not $NoShowTime) {
   try {
-    $portFile = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater\server.port'
+    $portFile = Join-Path ($env:USERPROFILE ?? $HOME) '.claude/scratch/autopro-theater/server.port'
     $port = 8770
     if (Test-Path -LiteralPath $portFile) {
       $p = (Get-Content -LiteralPath $portFile -Raw).Trim()
@@ -397,7 +396,7 @@ if (-not $NoShowTime) {
       killForeignLedgers = $false
       forceKillActiveForeign = $false
     } | ConvertTo-Json -Compress
-    $tokFile = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater\server.token'
+    $tokFile = Join-Path ($env:USERPROFILE ?? $HOME) '.claude/scratch/autopro-theater/server.token'
     $tok = if (Test-Path -LiteralPath $tokFile) { (Get-Content -LiteralPath $tokFile -Raw).Trim() } else { '' }
     $pre = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/preflight" -Method POST -ContentType 'application/json' -Headers @{ 'X-Showtime-Token' = $tok } -Body $preBody -TimeoutSec 8
     Write-Output ("preflight> wiped={0} handoversFlushed={1} outbox={2}" -f @($pre.wiped).Count, $pre.handoversFlushed, $pre.outbox)
@@ -436,7 +435,27 @@ if (-not $NoShowTime) {
   if ($Model) { $regArgs += @('-Model', $Model) }
   if ($VerifierEngine) { $regArgs += @('-VerifierEngine', $VerifierEngine) }
   if ($VerifierModel) { $regArgs += @('-VerifierModel', $VerifierModel) }
-  & pwsh @regArgs | ForEach-Object { Write-Output $_ }
+  $regOut = @(& pwsh @regArgs 2>&1)
+  $regOut | ForEach-Object { Write-Output $_ }
+  $regText = ($regOut | ForEach-Object { "$_" }) -join "`n"
+  if ($regText -match 'BOARD_GATE_FAIL=') {
+    throw "Show Time board gate failed during register — refusing to arm (UI would lie). See BOARD_GATE_FAIL above."
+  }
+  # P0 double-check: session must be on the board before we detach the runner
+  . (Join-Path $SkillScripts 'showtime-board-gate.ps1')
+  $gateBranch = 'main'
+  try {
+    Push-Location $RepoDir
+    $b = ("$(git rev-parse --abbrev-ref HEAD 2>$null)").Trim()
+    if ($b) { $gateBranch = $b }
+  } catch {} finally { Pop-Location }
+  $boardGate = Assert-BoardSessionRegistered -SessionId $sessionId -RepoPath $RepoDir `
+    -Branch $gateBranch -LedgerPath $ledger -LedgerTitle $ledgerTitle -LedgerHash $ledgerHash `
+    -LogPath (Join-Path $scratch 'autopro.log') -AllowAutoApprove -Retries 3
+  if (-not $boardGate.ok) {
+    throw $boardGate.error
+  }
+  Write-Output ("BOARD_LANE_OK session={0} healed={1}" -f $sessionId, $(if ($boardGate.healed) { 'true' } else { 'false' }))
 }
 
 # Detach runner.
@@ -480,13 +499,10 @@ $pwshExe = (Get-Command pwsh).Source
 $commandLine = '"{0}" {1}' -f $pwshExe, $runnerArgLine
 $runnerPid = 0
 try {
-  $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-    CommandLine      = $commandLine
-    CurrentDirectory = $RepoDir
-  }
+  $created = Start-DetachedProcess -CommandLine $commandLine -CurrentDirectory $RepoDir
   if ($created.ReturnValue -eq 0 -and $created.ProcessId) {
     $runnerPid = [int]$created.ProcessId
-    Write-Output ("RUNNER_DETACH=Win32_Process.Create")
+    Write-Output ("RUNNER_DETACH={0}" -f $created.How)
   } else {
     Write-Output ("RUNNER_DETACH_WARN return={0} — falling back to cmd start" -f $created.ReturnValue)
   }
@@ -506,7 +522,7 @@ if (-not $runnerPid) {
   while ((Get-Date) -lt $resolveDeadline -and -not $runnerPid) {
     Start-Sleep -Milliseconds 500
     try {
-      $cand = Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" -ErrorAction SilentlyContinue |
+      $cand = Get-AutoproProcessList -Names @('pwsh', 'powershell') |
         Where-Object {
           $_.CommandLine -and
           $_.CommandLine -match 'autopro-runner\.ps1' -and
@@ -725,7 +741,7 @@ Write-Output (Tv-Pad '▔▔▔▔                   ▔▔▔▔' 48)
 Write-Output ''
 Write-Output '  SHOWTIME · ON AIR'
 Write-Output '  Manual log:'
-Write-Output "    Get-Content `"$scratch\autopro.log`" -Wait"
+Write-Output "    Get-Content `"$scratch/autopro.log`" -Wait"
 Write-Output ''
 Write-Output "SHOWTIME_SESSION=$sessionId"
 Write-Output ("ENGINE={0}" -f $resolvedEngine.Engine)
@@ -742,6 +758,6 @@ Write-Output ("VERIFIER_MODEL={0}" -f $(if ($VerifierModel) { $VerifierModel } e
 Write-Output "VERIFIER_REPAIR_ATTEMPTS=$VerifierRepairAttempts"
 Write-Output ("ALLOW_MODEL_ONLY_FINAL_CHECK={0}" -f $(if ($AllowModelOnlyFinalCheck) { '1' } else { '0' }))
 Write-Output "RISK_ACK=AllowDangerousSkipPermissions+IAcceptUnattendedRisk"
-Write-Output "STATUS_LOG=$RepoDir\.claude\scratch\SHOWTIME-STATUS.md"
+Write-Output "STATUS_LOG=$RepoDir\.claude/scratch/SHOWTIME-STATUS.md"
 Write-Output 'CHAT_HINT=Chat only: TV card (board URL once on screen) + manual log (theater/showtime-tv-card.md).'
-Write-Output ("Stop: run {0} -Root `"{1}`" or remove .claude\scratch\autopro-on." -f $StopAutoPro, $Root)
+Write-Output ("Stop: run {0} -Root `"{1}`" or remove .claude/scratch/autopro-on." -f $StopAutoPro, $Root)

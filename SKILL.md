@@ -52,7 +52,22 @@ Canonical scripts live in this skill:
 | `theater/tips.json` | Pause-screen rotating tips |
 | `references/ENGINES.md` | Engine matrix + env vars |
 
-Always launch with **`pwsh`**, not Windows PowerShell 5.1.
+## Requirements (works on Windows, macOS, Linux)
+
+The scripts are cross-OS: process control, paths (`$HOME` + forward slashes), and worker
+resolution all branch on the OS. Two things must be true on the host:
+
+1. **PowerShell 7 (`pwsh`)** — NOT Windows PowerShell 5.1. It ships on most Windows boxes but is
+   usually **absent on a fresh macOS/Linux**, where the first `pwsh` call would fail with
+   `command not found`. Ensure it first (no sudo, user-space):
+   ```bash
+   bash "$HOME/.claude/skills/autopro/scripts/ensure-pwsh.sh"    # prints the pwsh path, installs if missing
+   ```
+   On Windows, `pwsh` is normally already present (`winget install Microsoft.PowerShell` if not).
+2. **At least one worker CLI on PATH** — `claude` / `codex` / `gemini` / `grok` (or `ollama`,
+   opt-in). `autopro-doctor.ps1` preflights this and names what's missing.
+
+Everywhere below, `$HOME` resolves to the user's home on all three OSes (pwsh sets it on Windows too).
 
 ## When you type `-autopro`
 
@@ -64,7 +79,7 @@ Always launch with **`pwsh`**, not Windows PowerShell 5.1.
 2. **Arm + Show Time + launch** (run from the repo, on the branch you want the work on):
 
    ```powershell
-   $skill = Join-Path $env:USERPROFILE '.claude\skills\autopro\scripts'
+   $skill = Join-Path $HOME '.claude/skills/autopro/scripts'   # $HOME works on Windows + macOS + Linux
    $root  = '<YOUR-REPO-ROOT>'   # scratch + flag root
    $repo  = $root                                  # ledger lives here
    & pwsh -NoProfile -File (Join-Path $skill 'launch-showtime.ps1') `
@@ -112,7 +127,7 @@ Always launch with **`pwsh`**, not Windows PowerShell 5.1.
 
    **Manual log:**
    ```powershell
-   Get-Content ".claude\scratch\autopro.log" -Wait
+   Get-Content ".claude/scratch/autopro.log" -Wait
    ```
 
 
@@ -166,17 +181,17 @@ exits — so the board still looks “on”.
 
 ```powershell
 # One repo
-pwsh -NoProfile -File "$env:USERPROFILE\.claude\skills\autopro\scripts\stop-autopro.ps1" `
+pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/stop-autopro.ps1" `
   -Root '<YOUR-REPO-ROOT>'
 
 # Everything on this machine
-pwsh -NoProfile -File "$env:USERPROFILE\.claude\skills\autopro\scripts\stop-autopro.ps1" -All
+pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/stop-autopro.ps1" -All
 ```
 
 Soft-only (wait for current slice, no process kill):
 
 ```powershell
-Remove-Item -LiteralPath '<Root>\.claude\scratch\autopro-on' -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath '<Root>/.claude/scratch/autopro-on' -Force -ErrorAction SilentlyContinue
 ```
 
 ## Show Time features
@@ -189,8 +204,8 @@ Remove-Item -LiteralPath '<Root>\.claude\scratch\autopro-on' -Force -ErrorAction
 - **Complete alarm** 1950s-style dual-tone ring in the open tab
 - **Todo drawer** opposite Pac-Man (list + optional board view); drag/resize
 - **Pause tips** rotate from `theater/tips.json`
-- **State bus:** `%USERPROFILE%\.claude\scratchutopro-theater\`
-- **Board auth:** every `/api/*` call (except `/api/health`) needs the per-boot token from `autopro-theater\server.token`; no CORS is granted, so other browser origins can neither read the board nor inject steers
+- **State bus:** `$HOME/.claude/scratch/autopro-theater/`
+- **Board auth:** every `/api/*` call (except `/api/health`) needs the per-boot token from `autopro-theater/server.token`; no CORS is granted, so other browser origins can neither read the board nor inject steers
 
 ## What the runner guarantees
 
@@ -215,13 +230,13 @@ Remove-Item -LiteralPath '<Root>\.claude\scratch\autopro-on' -Force -ErrorAction
 ## Tests
 
 ```powershell
-pwsh -NoProfile -File "$env:USERPROFILE\.claude\skills\autopro\scripts\test-showtime.ps1"
+pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/test-showtime.ps1"
 ```
 
 ## Multi-host install (Cursor / Claude Desktop / Antigravity / Codex / ChatGPT)
 
 `powershell
-pwsh -NoProfile -File "$env:USERPROFILE\.claude\skills\autopro\scripts\install-hosts.ps1" `
+pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/install-hosts.ps1" `
   -RepoDir "<YOUR-REPO-ROOT>"
 `
 

@@ -30,9 +30,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$scratch = Join-Path $Root '.claude\scratch'
+$scratch = Join-Path $Root '.claude/scratch'
 # Primary ledger (operator source of truth)
-$ledgerPrimary = Join-Path $RepoDir '.claude\scratch\ledger.md'
+$ledgerPrimary = Join-Path $RepoDir '.claude/scratch/ledger.md'
 $flag = Join-Path $scratch 'autopro-on'
 $log = Join-Path $scratch 'autopro.log'
 $sessionStatePath = Join-Path $scratch 'autopro-session.json'
@@ -40,13 +40,15 @@ $handoverPath = Join-Path $scratch 'SHOWTIME-HANDOVER.md'
 $RegisterPs1 = Join-Path $PSScriptRoot 'theater-register.ps1'
 $StatusPs1 = Join-Path $PSScriptRoot 'showtime-status.ps1'
 $SliceVerifierPs1 = Join-Path $PSScriptRoot 'showtime-slice-verifier.ps1'
-$StateRoot = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater'
+$StateRoot = Join-Path ($env:USERPROFILE ?? $HOME) '.claude/scratch/autopro-theater'
 $PortFile = Join-Path $StateRoot 'server.port'
 $workerPidFile = Join-Path $scratch 'autopro-worker.pid'
 
 # Merge gate lives in one place, shared with test-showtime.ps1
 . (Join-Path $PSScriptRoot 'showtime-final-check.ps1')
 . (Join-Path $PSScriptRoot 'worker-engines.ps1')
+# Cross-platform process enumeration + tree-kill (Windows path is the same CIM/taskkill as before).
+. (Join-Path $PSScriptRoot 'proc-crossos.ps1')
 if (Test-Path -LiteralPath $SliceVerifierPs1) { . $SliceVerifierPs1 }
 
 # The work happens in the repo itself — there is no isolated tree to prefer.
@@ -101,7 +103,7 @@ $script:Stats = @{
 if (-not $SessionId) {
   $SessionId = 'sess_' + [guid]::NewGuid().ToString('N').Substring(0, 12)
 }
-$verificationRoot = Join-Path $scratch "autopro-verification\$SessionId"
+$verificationRoot = Join-Path $scratch "autopro-verification/$SessionId"
 
 # Per-session kill switch: each runner owns autopro-on.<sessionId>, so one lane
 # finishing (or being stopped) can never disarm its siblings. Legacy bare
@@ -143,7 +145,7 @@ function Get-ShowTimeUrl {
 }
 
 function Get-ShowTimeToken {
-  $tf = Join-Path $env:USERPROFILE '.claude\scratch\autopro-theater\server.token'
+  $tf = Join-Path ($env:USERPROFILE ?? $HOME) '.claude/scratch/autopro-theater/server.token'
   if (Test-Path -LiteralPath $tf) { return (Get-Content -LiteralPath $tf -Raw).Trim() }
   return ''
 }
@@ -360,7 +362,7 @@ function Get-SteersText {
   $null = Log ("steers: consumed {0} message(s) for next claude -p" -f $parts.Count)
   # Clear one-shot nudge flag if present
   try {
-    $nudgeFlag = Join-Path $env:USERPROFILE ".claude\scratch\autopro-theater\steer\${SessionId}.nudge"
+    $nudgeFlag = Join-Path ($env:USERPROFILE ?? $HOME) ".claude/scratch/autopro-theater/steer/${SessionId}.nudge"
     if (Test-Path -LiteralPath $nudgeFlag) {
       Remove-Item -LiteralPath $nudgeFlag -Force -ErrorAction SilentlyContinue
     }
@@ -602,8 +604,9 @@ function Invoke-WorkerProcess {
         $timedOut = $true
         Log ("  worker TIMEOUT after {0}m — killing pid {1} ({2})" -f $MaxSliceMinutes, $proc.Id, $res.Engine)
         try {
-          # Kill tree: node-spawned CLIs may leave grandchildren
-          & taskkill.exe /PID $proc.Id /T /F 2>&1 | ForEach-Object { Log ("  taskkill| {0}" -f $_) }
+          # Kill tree: node-spawned CLIs may leave grandchildren. Cross-OS (Windows=taskkill).
+          if (Stop-ProcessTree -Id $proc.Id) { Log ("  killed tree pid {0}" -f $proc.Id) }
+          else { throw 'Stop-ProcessTree returned false' }
         } catch {
           try { $proc.Kill($true) } catch { try { $proc.Kill() } catch {} }
         }
@@ -1115,7 +1118,7 @@ while ($true) {
 
   # Board nudge while blocked: if operator nudged, clear board stall and keep
   # looping only when ledger is not truly [blocked] — real blocked slices still stop.
-  $nudgeFlagPath = Join-Path $env:USERPROFILE ".claude\scratch\autopro-theater\steer\${SessionId}.nudge"
+  $nudgeFlagPath = Join-Path ($env:USERPROFILE ?? $HOME) ".claude/scratch/autopro-theater/steer/${SessionId}.nudge"
   $hasNudge = Test-Path -LiteralPath $nudgeFlagPath
 
   if ($c.Blocked -gt 0) {
@@ -1195,7 +1198,7 @@ AUTOPRO_FINAL_CHECK_CMD). Your marker alone does not authorize completion.
     try { $handoverText = Get-Content -LiteralPath $hp -Raw -ErrorAction Stop } catch {}
     # proof artifact
     try {
-      $proofDir = Join-Path $RepoDir '.claude\scratch\operator-live\proof'
+      $proofDir = Join-Path $RepoDir '.claude/scratch/operator-live/proof'
       New-Item -ItemType Directory -Force -Path $proofDir | Out-Null
       $proof = @{
         sessionId = $SessionId
