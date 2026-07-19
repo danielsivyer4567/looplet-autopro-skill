@@ -92,7 +92,15 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 }
 
 Write-Host ''
-Write-Host 'Done. Next: create + approve a ledger, then type /autopro in Claude Code.'
-Write-Host ("Dry-run arm plan:  pwsh -NoProfile -File `"{0}/scripts/launch-autopro.ps1`" -Root <repo> -RepoDir <repo> -DryRun" -f $dest)
+Write-Host 'Done. Next:'
+Write-Host '  1) Open Claude Code in a repo'
+Write-Host '  2) Create + approve a ledger'
+Write-Host '  3) Type  /autopro          (auto: small→serial, large→ultra)'
+Write-Host '  4) Speed (pick one):'
+Write-Host '       /autopro            safe default (auto)'
+Write-Host '       /autopro ultra      FASTEST — parallel bands'
+Write-Host '       /autopro serial     one writer, slower, simpler'
+Write-Host '       /autopro off        stop'
+Write-Host ("Dry-run arm:  pwsh -NoProfile -File `"{0}/scripts/launch-autopro.ps1`" -Root <repo> -RepoDir <repo> -DryRun" -f $dest)
 Write-Host ("Stop anytime:  pwsh -NoProfile -File `"{0}/scripts/stop-autopro.ps1`" -All" -f $dest)
 Write-Host 'Trust / rollback: see TRUST.md in the package repo (or VERSION next to the skill).'

@@ -11,9 +11,11 @@ trigger: /autopro
 | Call | Mode | What runs |
 |------|------|-----------|
 | `-autopro` / `/autopro` | **auto** (default) | Count open ledger slices: **&lt; 12 → serial**, **≥ 12 → ultra** (tunable) |
-| `-autopro serial` | force **serial** | One writer · one fresh worker process per slice |
-| `-autopro ultra` / `parallel` | force **parallel** | Band orchestrator · worktrees · capped concurrency |
+| `-autopro ultra` / `parallel` | **FASTEST** | Parallel bands · worktrees · capped concurrency |
+| `-autopro serial` | force **serial** | One writer · one fresh worker process per slice (slower, simpler) |
 | `-autopro off` | stop | `stop-autopro.ps1` |
+
+**Chat speed cheat-sheet (say exactly this):** `/autopro` · `/autopro ultra` · `/autopro serial` · `/autopro off`
 
 | Open slices (pending + in-progress) | Auto picks |
 |-------------------------------------|------------|

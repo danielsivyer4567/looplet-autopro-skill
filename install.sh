@@ -87,10 +87,15 @@ fi
 cat <<EOF
 
 Done. Next:
-  1) Open your agent (Claude Code) in a repo.
-  2) Create + approve a ledger (the \`ledger\` skill).
-  3) Type  /autopro   (or -autopro).
-Dry-run arm plan:
+  1) Open Claude Code in a repo
+  2) Create + approve a ledger
+  3) Type  /autopro          (auto: small→serial, large→ultra)
+  4) Speed (pick one):
+       /autopro            safe default (auto)
+       /autopro ultra      FASTEST — parallel bands
+       /autopro serial     one writer, slower, simpler
+       /autopro off        stop
+Dry-run arm:
   pwsh -NoProfile -File "\$HOME/.claude/skills/autopro/scripts/launch-autopro.ps1" -Root <repo> -RepoDir <repo> -DryRun
 Stop anytime:  pwsh -NoProfile -File "\$HOME/.claude/skills/autopro/scripts/stop-autopro.ps1" -All
 Trust / rollback: see TRUST.md (package repo) or VERSION next to the skill.

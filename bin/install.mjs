@@ -182,14 +182,18 @@ Trust: https://github.com/danielsivyer4567/looplet-autopro-skill/blob/master/TRU
   log('Done. Next:');
   log('  1) Open Claude Code in a repo');
   log('  2) Create + approve a ledger');
-  log('  3) Type  /autopro');
+  log('  3) Type  /autopro          (auto: small→serial, large→ultra)');
+  log('  4) Speed (pick one):');
+  log('       /autopro            safe default (auto)');
+  log('       /autopro ultra      FASTEST — parallel bands');
+  log('       /autopro serial     one writer, slower, simpler');
+  log('       /autopro off        stop');
   log('');
-  log(`Dry-run arm:  npx --yes --package=@looplet/autopro autopro --version`);
   log(
-    `  or: pwsh -NoProfile -File "${path.join(dest, 'scripts', 'launch-autopro.ps1')}" -Root <repo> -RepoDir <repo> -DryRun`,
+    `Dry-run arm:  pwsh -NoProfile -File "${path.join(dest, 'scripts', 'launch-autopro.ps1')}" -Root <repo> -RepoDir <repo> -DryRun`,
   );
   log(`Stop:         pwsh -NoProfile -File "${path.join(dest, 'scripts', 'stop-autopro.ps1')}" -All`);
-  log('Trust:        see TRUST.md in the package / installed skill dir');
+  log('Trust:        see TRUST.md next to the skill (or package README)');
 }
 
 main();
