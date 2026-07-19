@@ -177,23 +177,38 @@ Trust: https://github.com/danielsivyer4567/looplet-autopro-skill/blob/master/TRU
     }
   }
 
+  // Tiered colors for the speed menu (respect NO_COLOR / non-TTY)
+  const useColor =
+    process.stdout.isTTY &&
+    !process.env.NO_COLOR &&
+    process.env.FORCE_COLOR !== '0';
+  const c = {
+    reset: useColor ? '\x1b[0m' : '',
+    bold: useColor ? '\x1b[1m' : '',
+    green: useColor ? '\x1b[32m' : '',
+    blue: useColor ? '\x1b[94m' : '', // bright blue — ultra / FASTEST
+    gray: useColor ? '\x1b[90m' : '', // light gray — serial
+    dim: useColor ? '\x1b[2m' : '',
+    yellow: useColor ? '\x1b[33m' : '',
+  };
+
   log(`AutoPro skill installed -> ${dest} (v${version})`);
   log('');
-  log('Done. Next:');
+  log(`${c.bold}Done. Next:${c.reset}`);
   log('  1) Open Claude Code in a repo');
   log('  2) Create + approve a ledger');
-  log('  3) Type  /autopro          (auto: small→serial, large→ultra)');
+  log(`  3) Type  ${c.green}/autopro${c.reset}          (auto: small→serial, large→ultra)`);
   log('  4) Speed (pick one):');
-  log('       /autopro            safe default (auto)');
-  log('       /autopro ultra      FASTEST — parallel bands');
-  log('       /autopro serial     one writer, slower, simpler');
-  log('       /autopro off        stop');
+  log(`       ${c.green}/autopro${c.reset}            safe default (auto)`);
+  log(`       ${c.blue}${c.bold}/autopro ultra${c.reset}${c.blue}      FASTEST — parallel bands${c.reset}`);
+  log(`       ${c.gray}/autopro serial${c.reset}     one writer, slower, simpler`);
+  log(`       ${c.yellow}/autopro off${c.reset}        stop`);
   log('');
   log(
-    `Dry-run arm:  pwsh -NoProfile -File "${path.join(dest, 'scripts', 'launch-autopro.ps1')}" -Root <repo> -RepoDir <repo> -DryRun`,
+    `${c.dim}Dry-run arm:  pwsh -NoProfile -File "${path.join(dest, 'scripts', 'launch-autopro.ps1')}" -Root <repo> -RepoDir <repo> -DryRun${c.reset}`,
   );
-  log(`Stop:         pwsh -NoProfile -File "${path.join(dest, 'scripts', 'stop-autopro.ps1')}" -All`);
-  log('Trust:        see TRUST.md next to the skill (or package README)');
+  log(`${c.dim}Stop:         pwsh -NoProfile -File "${path.join(dest, 'scripts', 'stop-autopro.ps1')}" -All${c.reset}`);
+  log(`${c.dim}Trust:        see TRUST.md next to the skill (or package README)${c.reset}`);
 }
 
 main();

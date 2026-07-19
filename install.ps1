@@ -92,15 +92,25 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 }
 
 Write-Host ''
-Write-Host 'Done. Next:'
+Write-Host 'Done. Next:' -ForegroundColor White
 Write-Host '  1) Open Claude Code in a repo'
 Write-Host '  2) Create + approve a ledger'
-Write-Host '  3) Type  /autopro          (auto: small→serial, large→ultra)'
+Write-Host -NoNewline '  3) Type  '
+Write-Host -NoNewline '/autopro' -ForegroundColor Green
+Write-Host '          (auto: small→serial, large→ultra)'
 Write-Host '  4) Speed (pick one):'
-Write-Host '       /autopro            safe default (auto)'
-Write-Host '       /autopro ultra      FASTEST — parallel bands'
-Write-Host '       /autopro serial     one writer, slower, simpler'
-Write-Host '       /autopro off        stop'
-Write-Host ("Dry-run arm:  pwsh -NoProfile -File `"{0}/scripts/launch-autopro.ps1`" -Root <repo> -RepoDir <repo> -DryRun" -f $dest)
-Write-Host ("Stop anytime:  pwsh -NoProfile -File `"{0}/scripts/stop-autopro.ps1`" -All" -f $dest)
-Write-Host 'Trust / rollback: see TRUST.md in the package repo (or VERSION next to the skill).'
+Write-Host -NoNewline '       '
+Write-Host -NoNewline '/autopro' -ForegroundColor Green
+Write-Host '            safe default (auto)'
+Write-Host -NoNewline '       '
+Write-Host -NoNewline '/autopro ultra' -ForegroundColor Blue
+Write-Host '      FASTEST — parallel bands' -ForegroundColor Blue
+Write-Host -NoNewline '       '
+Write-Host -NoNewline '/autopro serial' -ForegroundColor DarkGray
+Write-Host '     one writer, slower, simpler' -ForegroundColor DarkGray
+Write-Host -NoNewline '       '
+Write-Host -NoNewline '/autopro off' -ForegroundColor Yellow
+Write-Host '        stop' -ForegroundColor Yellow
+Write-Host ("Dry-run arm:  pwsh -NoProfile -File `"{0}/scripts/launch-autopro.ps1`" -Root <repo> -RepoDir <repo> -DryRun" -f $dest) -ForegroundColor DarkGray
+Write-Host ("Stop anytime:  pwsh -NoProfile -File `"{0}/scripts/stop-autopro.ps1`" -All" -f $dest) -ForegroundColor DarkGray
+Write-Host 'Trust / rollback: see TRUST.md in the package repo (or VERSION next to the skill).' -ForegroundColor DarkGray

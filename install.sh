@@ -84,19 +84,23 @@ else
   echo "NOTE: pwsh not ready — see messages above; the skill needs PowerShell 7 to run." >&2
 fi
 
-cat <<EOF
+# Tiered colors for the speed menu (respect NO_COLOR / non-TTY)
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  G='\033[32m'; B='\033[94m'; Y='\033[33m'; K='\033[90m'; Z='\033[0m'; BD='\033[1m'
+else
+  G=''; B=''; Y=''; K=''; Z=''; BD=''
+fi
 
-Done. Next:
-  1) Open Claude Code in a repo
-  2) Create + approve a ledger
-  3) Type  /autopro          (auto: small→serial, large→ultra)
-  4) Speed (pick one):
-       /autopro            safe default (auto)
-       /autopro ultra      FASTEST — parallel bands
-       /autopro serial     one writer, slower, simpler
-       /autopro off        stop
-Dry-run arm:
-  pwsh -NoProfile -File "\$HOME/.claude/skills/autopro/scripts/launch-autopro.ps1" -Root <repo> -RepoDir <repo> -DryRun
-Stop anytime:  pwsh -NoProfile -File "\$HOME/.claude/skills/autopro/scripts/stop-autopro.ps1" -All
-Trust / rollback: see TRUST.md (package repo) or VERSION next to the skill.
-EOF
+printf '\n%bDone. Next:%b\n' "$BD" "$Z"
+printf '  1) Open Claude Code in a repo\n'
+printf '  2) Create + approve a ledger\n'
+printf '  3) Type  %b/autopro%b          (auto: small→serial, large→ultra)\n' "$G" "$Z"
+printf '  4) Speed (pick one):\n'
+printf '       %b/autopro%b            safe default (auto)\n' "$G" "$Z"
+printf '       %b%b/autopro ultra%b      FASTEST — parallel bands\n' "$B" "$BD" "$Z"
+printf '       %b/autopro serial%b     one writer, slower, simpler\n' "$K" "$Z"
+printf '       %b/autopro off%b        stop\n' "$Y" "$Z"
+printf '%bDry-run arm:\n' "$K"
+printf '  pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/launch-autopro.ps1" -Root <repo> -RepoDir <repo> -DryRun\n'
+printf 'Stop anytime:  pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/stop-autopro.ps1" -All\n'
+printf 'Trust / rollback: see TRUST.md (package repo) or VERSION next to the skill.%b\n' "$Z"
