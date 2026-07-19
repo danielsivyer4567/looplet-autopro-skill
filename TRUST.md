@@ -30,9 +30,9 @@ Those last items raise a public skill into a solid “8/10 trust” band; with d
 ## Preferred install
 
 ```bash
-npx @looplet/autopro
-# pin: npx @looplet/autopro@1.2.0
-# dry: npx @looplet/autopro --dry-run
+npx looplet-autopro
+# pin: npx looplet-autopro@1.2.3
+# dry: npx looplet-autopro --dry-run
 ```
 
 `npx` fetches a **versioned package** from the npm registry (or GitHub if you use the git form). No `irm | iex`.

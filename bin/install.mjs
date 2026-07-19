@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 /**
- * npx @looplet/autopro — install AutoPro skill into ~/.claude/skills/autopro
+ * npx looplet-autopro — install AutoPro skill into ~/.claude/skills/autopro
  *
- *   npx @looplet/autopro
- *   npx @looplet/autopro --dry-run
- *   npx @looplet/autopro --version
+ *   npx looplet-autopro
+ *   npx looplet-autopro --dry-run
+ *   npx looplet-autopro --version
  *
  * Preferred short install. No pipe-to-shell. Pin with:
- *   npx @looplet/autopro@1.2.0
+ *   npx looplet-autopro@1.2.2
+ *
+ * Also published as @looplet/autopro when the org scope packument is healthy.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -104,7 +106,7 @@ Trust: https://github.com/danielsivyer4567/looplet-autopro-skill/blob/master/TRU
   log(`AUTOPRO_VERSION=${version}`);
   log(`INSTALL_SRC=${skillSrc}`);
   log(`INSTALL_DEST=${dest}`);
-  log(`INSTALL_VIA=npx @looplet/autopro`);
+  log('INSTALL_VIA=npx looplet-autopro');
 
   if (dryRun) {
     const exists = fs.existsSync(dest);

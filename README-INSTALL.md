@@ -11,12 +11,12 @@ Linux).
 ## Preferred install (short)
 
 ```bash
-npx @looplet/autopro
+npx looplet-autopro
 ```
 
 ```bash
-npx @looplet/autopro --dry-run
-npx @looplet/autopro@1.2.0
+npx looplet-autopro --dry-run
+npx looplet-autopro@1.2.3
 ```
 
 If you get **404 Not Found** from the npm registry, the package is not published yet (or scope missing). Use:

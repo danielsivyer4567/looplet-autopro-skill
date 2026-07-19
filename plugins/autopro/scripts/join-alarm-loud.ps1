@@ -83,7 +83,7 @@ function Resolve-JoinChimeWav {
   $candidates = @(
     (Join-Path $script:state 'join-chime.wav'),
     (Join-Path $skillAssets 'join-chime.wav'),
-    (Join-Path $skillAssets 'shake-and-bake-motherfucker--i.wav'),
+    (Join-Path $skillAssets 'shake-and-bake-join.wav'),
     (Join-Path (Split-Path -Parent $PSCommandPath) 'join-chime.wav'),
     (Join-Path $env:USERPROFILE '.agents\skills\autopro\theater\assets\join-chime.wav')
   )

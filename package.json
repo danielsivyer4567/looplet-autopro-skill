@@ -1,7 +1,7 @@
 {
-  "name": "@looplet/autopro",
-  "version": "1.2.0",
-  "description": "Install the AutoPro skill (autonomous ledger + Show Time). Run: npx @looplet/autopro",
+  "name": "looplet-autopro",
+  "version": "1.2.3",
+  "description": "Install the AutoPro skill. Run: npx looplet-autopro",
   "type": "module",
   "bin": {
     "autopro": "bin/install.mjs"

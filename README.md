@@ -22,10 +22,10 @@ Force anytime: `-autopro serial` · `-autopro ultra` · stop with `-autopro off`
 ### Preferred (short)
 
 ```bash
-npx @looplet/autopro
+npx looplet-autopro
 ```
 
-Pin: `npx @looplet/autopro@1.2.0` · dry-run: `npx @looplet/autopro --dry-run`
+Pin: `npx looplet-autopro@1.2.0` · dry-run: `npx looplet-autopro --dry-run`
 
 If npm 404s (package not published yet on this machine’s registry), use Git temporarily:
 

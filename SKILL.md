@@ -36,10 +36,10 @@ trigger: /autopro
 ## Install
 
 ```bash
-npx @looplet/autopro
+npx looplet-autopro
 ```
 
-Pin: `npx @looplet/autopro@1.2.0` · if npm 404: `npx --yes github:danielsivyer4567/looplet-autopro-skill`  
+Pin: `npx looplet-autopro@1.2.3` · if npm 404: `npx --yes github:danielsivyer4567/looplet-autopro-skill`  
 Clone path / trust: [TRUST.md](./TRUST.md) · [README.md](./README.md)
 
 ## Dry-run (no arm)

@@ -1,11 +1,16 @@
 # Changelog
 
+## [1.2.3] — 2026-07-19
+
+### Install
+- **Live:** `npx looplet-autopro` (npm package `looplet-autopro@1.2.3`)
+- Scoped `@looplet/autopro` was published but registry packument 404s; unscoped name is the supported short install until scope is fixed on npm org
 All notable changes to the AutoPro skill package are documented here.
 
 ## [1.2.0] — 2026-07-19
 
 ### Install
-- **`npx @looplet/autopro`** — short install via npm (`package.json` + `bin/install.mjs`)
+- **`npx looplet-autopro`** — short install via npm (`package.json` + `bin/install.mjs`)
 - `preferGlobal: true`; `--dry-run` / `--version` on the installer
 - Until the package is on the registry, use: `npx github:danielsivyer4567/looplet-autopro-skill`
 
@@ -50,3 +55,4 @@ All notable changes to the AutoPro skill package are documented here.
 - Plugin packaging (`plugins/autopro`), marketplace metadata
 - Cross-OS install (`get.ps1` / `get.sh`, `ensure-pwsh.sh`)
 - Multi-engine workers, Show Time board, zero-git projector contract
+
