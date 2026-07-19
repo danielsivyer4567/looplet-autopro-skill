@@ -4,7 +4,7 @@
   "description": "Install the AutoPro skill (autonomous ledger + Show Time). Run: npx @looplet/autopro",
   "type": "module",
   "bin": {
-    "autopro": "./bin/install.mjs"
+    "autopro": "bin/install.mjs"
   },
   "files": [
     "bin",
