@@ -15,6 +15,27 @@ if ($src -match 'Get-LedgerOpenSliceCount|SerialMaxSlices') { Ok 'size heuristic
 if ($src -match 'launch-showtime\.ps1') { Ok 'dispatches serial → launch-showtime' } else { Bad 'no serial dispatch' }
 if ($src -match 'launch-ultra\.ps1') { Ok 'dispatches ultra → launch-ultra' } else { Bad 'no ultra dispatch' }
 if ($src -match "Mode -eq 'parallel'") { Ok 'parallel aliases to ultra' } else { Bad 'no parallel alias' }
+if ($src -match '\$DryRun' -and $src -match 'DRY_RUN=1') { Ok 'DryRun switch + exit path present' } else { Bad 'DryRun missing' }
+
+# Live DryRun against a temp repo (no arm)
+$tmp = Join-Path ([IO.Path]::GetTempPath()) ("autopro-dryrun-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path (Join-Path $tmp '.claude/scratch') | Out-Null
+@(
+  '# Ledger: dry-run fixture'
+  'Approved: yes'
+  '## SC-01 — A  [pending]'
+  '## SC-02 — B  [pending]'
+) | Set-Content -LiteralPath (Join-Path $tmp '.claude/scratch/ledger.md') -Encoding utf8
+try {
+  $out = & pwsh -NoProfile -File $launch -Root $tmp -RepoDir $tmp -DryRun 2>&1 | Out-String
+  if ($LASTEXITCODE -eq 0 -and $out -match 'DRY_RUN=1' -and $out -match 'AUTOPRO_MODE=serial') {
+    Ok 'live DryRun exits 0 and picks serial for small ledger'
+  } else {
+    Bad ("live DryRun failed exit={0} out={1}" -f $LASTEXITCODE, $out.Substring(0, [Math]::Min(200, $out.Length)))
+  }
+} finally {
+  Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 # Pure count helper by sourcing a minimal extract: run auto resolve against temp ledgers
 function Count-Open([string]$text) {

@@ -20,8 +20,10 @@
     -autopro ultra | parallel        → force ultra
     -autopro off                     → stop-autopro.ps1 (not this file)
 
-  Risk switches still required:
+  Risk switches still required to arm (not needed for -DryRun):
     -AllowDangerousSkipPermissions -IAcceptUnattendedRisk
+
+  -DryRun  Print resolved mode + dispatch target; do not arm, spawn, or open board.
 
   Size heuristic (tunable):
     -SerialMaxSlices 12   (default) — at/above this remaining count → ultra
@@ -60,7 +62,9 @@ param(
   [switch]$UnblockPaused,
   [int]$MaxBandMinutes = 120,
   [int]$StallMinutes = 12,
-  [switch]$RequireBoard
+  [switch]$RequireBoard,
+  # Trust: resolve mode + print plan only — no risk flags, no workers, no board
+  [switch]$DryRun
 )
 
 $ErrorActionPreference = 'Stop'
@@ -107,11 +111,20 @@ Write-Output ("AUTOPRO_SERIAL_MAX_SLICES={0}" -f $SerialMaxSlices)
 Write-Output ("AUTOPRO_ENTRY=launch-autopro.ps1")
 Write-Output ("ROOT={0}" -f $Root)
 Write-Output ("REPO={0}" -f $RepoDir)
+Write-Output ("AUTOPRO_ENGINE={0}" -f $Engine)
+Write-Output ("AUTOPRO_DRY_RUN={0}" -f ($(if ($DryRun) { '1' } else { '0' })))
 
 if ($Mode -eq 'serial') {
   $launch = Join-Path $here 'launch-showtime.ps1'
   if (-not (Test-Path -LiteralPath $launch)) {
     throw "Serial launcher missing: $launch"
+  }
+  Write-Output 'DISPATCH=launch-showtime.ps1 (serial · one writer · fresh context per slice)'
+  if ($DryRun) {
+    Write-Output 'DRY_RUN=1'
+    Write-Output 'DRY_RUN_ACTION=would arm serial via launch-showtime.ps1 (no workers, no board, no risk flags used)'
+    Write-Output ("DRY_RUN_TARGET={0}" -f $launch)
+    exit 0
   }
   $args = @(
     '-NoProfile', '-File', $launch,
@@ -134,7 +147,6 @@ if ($Mode -eq 'serial') {
   if ($NoSliceVerifier) { $args += '-NoSliceVerifier' }
   if ($NoWatch) { $args += '-NoWatch' }
 
-  Write-Output 'DISPATCH=launch-showtime.ps1 (serial · one writer · fresh context per slice)'
   & pwsh @args
   exit $LASTEXITCODE
 }
@@ -151,6 +163,15 @@ if ($resolvedFrom -like 'auto*') {
     Write-Output ("AUTOPRO_MAX_CONCURRENCY_AUTO={0} (was {1})" -f $suggested, $MaxConcurrency)
     $MaxConcurrency = [int]$suggested
   }
+}
+Write-Output 'DISPATCH=launch-ultra.ps1 (parallel bands · worktrees · capped concurrency)'
+Write-Output ("AUTOPRO_BAND_SIZE={0}" -f $BandSize)
+Write-Output ("AUTOPRO_MAX_CONCURRENCY={0}" -f $MaxConcurrency)
+if ($DryRun) {
+  Write-Output 'DRY_RUN=1'
+  Write-Output 'DRY_RUN_ACTION=would arm ultra via launch-ultra.ps1 (no workers, no board, no risk flags used)'
+  Write-Output ("DRY_RUN_TARGET={0}" -f $launch)
+  exit 0
 }
 $args = @(
   '-NoProfile', '-File', $launch,
@@ -171,6 +192,5 @@ if ($NoSliceVerifier) { $args += '-NoSliceVerifier' }
 if ($UnblockPaused) { $args += '-UnblockPaused' }
 if ($RequireBoard) { $args += '-RequireBoard' }
 
-Write-Output 'DISPATCH=launch-ultra.ps1 (parallel bands · worktrees · capped concurrency)'
 & pwsh @args
 exit $LASTEXITCODE

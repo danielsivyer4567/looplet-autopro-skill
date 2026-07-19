@@ -29,7 +29,10 @@ pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/launch-autopro.ps1" 
   -Root '<repo>' -RepoDir '<repo>' `
   -AllowDangerousSkipPermissions -IAcceptUnattendedRisk
 # force: -Mode serial | -Mode ultra
+# plan only (no arm): add -DryRun  (no risk switches needed)
 ```
+
+Install trust: prefer `git clone` + `install.ps1` over `irm | iex`. See package `TRUST.md`, `VERSION`, `CHANGELOG.md`, `SHA256SUMS.txt`.
 
 `work` does one slice, commits, and stops so you can `/clear` and run `work`
 again. **Auto/serial** `autopro` removes both manual steps: you type `-autopro` **once**, and a

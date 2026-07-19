@@ -1,0 +1,40 @@
+# Changelog
+
+All notable changes to the AutoPro skill package are documented here.
+
+## [1.1.1] — 2026-07-19
+
+### Trust / public review response
+- **Preferred install path** documented first: `git clone` + `install.ps1` / `install.sh` (inspect before run)
+- **`get.ps1` / `get.sh`** warn as remote code execution; support `AUTOPRO_REF` pin (tag/SHA)
+- **`-DryRun` on `launch-autopro.ps1`** — real implementation: resolve serial/ultra, print dispatch, exit 0 (no arm)
+- **`install.ps1` / `install.sh`**: `-DryRun` / `--dry-run`, `-Version` / `--version`; copy VERSION/TRUST/CHANGELOG/SHA256SUMS into skill dir
+- **`README.md`**, **`TRUST.md`**, **`README-INSTALL.md`** — safeguards, serial vs ultra, rollback, proof scripts
+- **`SHA256SUMS.txt`** + `write-checksums.ps1` for release pins
+- Explicit: no cosign/SLSA yet — honest ceiling below signed-release 8/10
+
+## [1.1.0] — 2026-07-19
+
+### Added
+- **`launch-autopro.ps1`** — single front door; `-Mode auto|serial|ultra`
+- **Auto size heuristic** — open slices &lt; 12 → serial, ≥ 12 → ultra (`-SerialMaxSlices`)
+- Supervisor v1 (kickstart, needs-you, chat inbox, watch)
+- Sticky join approve (bottom-right, no auto-timeout; board + MessageBox fallbacks)
+- ORCH speech bubble + desk transcript; `test-orch-comms.ps1`
+- Independent final gate invoke (`Invoke-IndependentFinalGate`)
+- Stub engine + `soak-serial-n.ps1` offline soak
+- MAP: one Pac-Man track per SC slice
+- Shake-and-bake join chime (full PlaySync)
+- Ultra band scripts (`launch-ultra`, `autopro-ultra`, …)
+
+### Fixed
+- Purge-dead rematerialize zombie loop (stale `autopro-on` flags)
+- Chrome board open double-window / `Profile 5` split junk tab
+- Join popup auto-close at 10 minutes
+- Missing independent gate function hung finalizer
+
+## [1.0.0] — 2026-07
+
+- Plugin packaging (`plugins/autopro`), marketplace metadata
+- Cross-OS install (`get.ps1` / `get.sh`, `ensure-pwsh.sh`)
+- Multi-engine workers, Show Time board, zero-git projector contract
