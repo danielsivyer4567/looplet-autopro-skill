@@ -27,14 +27,31 @@ We do **not** currently ship:
 
 Those last items raise a public skill into a solid “8/10 trust” band; with docs + dry-run + checksums + preferred clone path, this is a **usable public automation package with explicit residual risk** — not an internal-only helper.
 
-## Preferred install (no pipe-to-shell)
+## Preferred install
+
+```bash
+npx @looplet/autopro
+# pin: npx @looplet/autopro@1.2.0
+# dry: npx @looplet/autopro --dry-run
+```
+
+`npx` fetches a **versioned package** from the npm registry (or GitHub if you use the git form). No `irm | iex`.
+
+If `@looplet/autopro` is 404 on npm, until publish:
+
+```bash
+npx --yes github:danielsivyer4567/looplet-autopro-skill
+```
+
+### Inspect-first (clone)
 
 ```bash
 git clone https://github.com/danielsivyer4567/looplet-autopro-skill.git
 cd looplet-autopro-skill
 git log -1 --oneline          # note SHA
-# Read: install.ps1, plugins/autopro/scripts/launch-autopro.ps1, plugins/autopro/SKILL.md
+# Read: install.ps1, bin/install.mjs, plugins/autopro/SKILL.md
 pwsh -NoProfile -File install.ps1
+# or: node bin/install.mjs
 ```
 
 ## Convenience install (pipe) — what it actually does

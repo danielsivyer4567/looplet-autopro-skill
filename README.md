@@ -17,39 +17,43 @@ Force anytime: `-autopro serial` · `-autopro ultra` · stop with `-autopro off`
 
 ---
 
-## Install (preferred: inspect, then install)
+## Install
 
-**Do not start with `irm | iex` if you care about supply-chain review.** Prefer clone + local install so you can read the scripts first.
+### Preferred (short)
 
-### Trusted path (recommended)
+```bash
+npx @looplet/autopro
+```
+
+Pin: `npx @looplet/autopro@1.2.0` · dry-run: `npx @looplet/autopro --dry-run`
+
+If npm 404s (package not published yet on this machine’s registry), use Git temporarily:
+
+```bash
+npx --yes github:danielsivyer4567/looplet-autopro-skill
+```
+
+### Inspect-first (clone, no npx)
 
 ```bash
 git clone https://github.com/danielsivyer4567/looplet-autopro-skill.git
 cd looplet-autopro-skill
-# Optional: verify pin + checksums (see TRUST.md)
-git checkout master   # or a release tag when published
 pwsh -NoProfile -File install.ps1          # Windows
 # bash install.sh                          # macOS / Linux
+# or: node bin/install.mjs
 ```
 
-### Convenience path (remote bootstrap — higher risk)
+### Legacy pipe (remote bootstrap — higher risk)
 
 ```powershell
-# Windows — downloads zip of master and runs install.ps1
 irm https://raw.githubusercontent.com/danielsivyer4567/looplet-autopro-skill/master/get.ps1 | iex
 ```
 
 ```bash
-# macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/danielsivyer4567/looplet-autopro-skill/master/get.sh | bash
 ```
 
-`get.ps1` / `get.sh` are **explicit remote code execution**. They only:
-
-1. Download the GitHub archive for `master`
-2. Run the **local** `install.ps1` / `install.sh` from that archive (copies into `~/.claude/skills/autopro`, backs up any previous install)
-
-They do **not** run arbitrary post-install network hooks. Still: treat them as convenience for mates who already trust this repo.
+`get.ps1` / `get.sh` download the GitHub archive and run local `install.ps1` / `install.sh` only. Prefer **npx** or clone.
 
 ### Verify after install
 

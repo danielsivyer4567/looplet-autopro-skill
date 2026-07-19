@@ -1,7 +1,7 @@
 {
   "name": "autopro",
   "description": "Unified AutoPro: auto serial/ultra by ledger size, Show Time board, supervisor, join sticky approve, MAP Pac-per-SC. Multi-engine. Cross-OS.",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "author": {
     "name": "danielsivyer4567",
     "email": "danielsivyer4567@users.noreply.github.com"

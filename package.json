@@ -1,0 +1,52 @@
+{
+  "name": "@looplet/autopro",
+  "version": "1.2.0",
+  "description": "Install the AutoPro skill (autonomous ledger + Show Time). Run: npx @looplet/autopro",
+  "type": "module",
+  "bin": {
+    "autopro": "./bin/install.mjs"
+  },
+  "files": [
+    "bin",
+    "plugins/autopro",
+    "VERSION",
+    "LICENSE",
+    "TRUST.md",
+    "CHANGELOG.md",
+    "README.md",
+    "README-INSTALL.md",
+    "SKILL.md",
+    "SHA256SUMS.txt"
+  ],
+  "scripts": {
+    "install-skill": "node ./bin/install.mjs",
+    "dry-run": "node ./bin/install.mjs --dry-run",
+    "test:install": "node ./bin/install.mjs --dry-run && node ./bin/install.mjs --version"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/danielsivyer4567/looplet-autopro-skill.git"
+  },
+  "homepage": "https://github.com/danielsivyer4567/looplet-autopro-skill#readme",
+  "bugs": {
+    "url": "https://github.com/danielsivyer4567/looplet-autopro-skill/issues"
+  },
+  "keywords": [
+    "autopro",
+    "claude-code",
+    "skill",
+    "looplet",
+    "showtime",
+    "ledger",
+    "npx"
+  ],
+  "author": "danielsivyer4567",
+  "license": "MIT",
+  "preferGlobal": true
+}

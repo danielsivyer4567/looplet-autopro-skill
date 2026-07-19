@@ -8,47 +8,49 @@ Linux).
 
 ---
 
-## Preferred install (inspect, then install — no pipe-to-shell)
+## Preferred install (short)
+
+```bash
+npx @looplet/autopro
+```
+
+```bash
+npx @looplet/autopro --dry-run
+npx @looplet/autopro@1.2.0
+```
+
+If you get **404 Not Found** from the npm registry, the package is not published yet (or scope missing). Use:
+
+```bash
+npx --yes github:danielsivyer4567/looplet-autopro-skill
+```
+
+Or clone + install (inspect-first):
 
 ```bash
 git clone https://github.com/danielsivyer4567/looplet-autopro-skill.git
 cd looplet-autopro-skill
-git log -1 --oneline          # note SHA
-# Optional: read install.ps1, TRUST.md, plugins/autopro/scripts/launch-autopro.ps1
-pwsh -NoProfile -File install.ps1 -DryRun   # plan only
-pwsh -NoProfile -File install.ps1           # Windows / any OS with pwsh
-# bash install.sh                           # macOS / Linux
+pwsh -NoProfile -File install.ps1   # or: node bin/install.mjs
 ```
 
-Rollback: installs always leave `~/.claude/autopro-backups/autopro.bak-<timestamp>`.
+Rollback: installs leave `~/.claude/autopro-backups/autopro.bak-<timestamp>`.
 
 ---
 
-## Convenience install (remote bootstrap — higher risk)
+## Legacy pipe (remote bootstrap — higher risk)
 
-`get.ps1` / `get.sh` **download and execute** whatever is on the chosen ref. That is a review red flag
-for a reason — use only if you already trust this repo.
+`get.ps1` / `get.sh` download and execute code from GitHub. Prefer **npx**.
 
-**Windows** (PowerShell):
+**Windows:**
 ```powershell
-# Floating master (least safe)
-irm https://raw.githubusercontent.com/danielsivyer4567/looplet-autopro-skill/master/get.ps1 | iex
-
-# Pinned tag or commit (better)
-$env:AUTOPRO_REF = 'v1.1.1'   # or full SHA
+$env:AUTOPRO_REF = 'v1.2.0'
 irm https://raw.githubusercontent.com/danielsivyer4567/looplet-autopro-skill/master/get.ps1 | iex
 ```
 
-**macOS / Linux**:
+**macOS / Linux:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/danielsivyer4567/looplet-autopro-skill/master/get.sh | bash
-# Pin:
-AUTOPRO_REF=v1.1.1 curl -fsSL …/get.sh | bash
+AUTOPRO_REF=v1.2.0 curl -fsSL https://raw.githubusercontent.com/danielsivyer4567/looplet-autopro-skill/master/get.sh | bash
 ```
-
-What the bootstrapper does (and only this): download the GitHub archive → run **local**
-`install.ps1` / `install.sh` from that archive (copy into `~/.claude/skills/autopro`, backup first).
-No second-stage binary download.
 
 ---
 

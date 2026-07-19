@@ -33,17 +33,14 @@ trigger: /autopro
 | `-autopro ultra` | force parallel | Worktree bands · capped concurrency |
 | `-autopro off` | stop | `stop-autopro.ps1` |
 
-## Install (preferred — no pipe-to-shell)
+## Install
 
 ```bash
-git clone https://github.com/danielsivyer4567/looplet-autopro-skill.git
-cd looplet-autopro-skill
-# Read: this file, plugins/autopro/SKILL.md, TRUST.md, install.ps1
-pwsh -NoProfile -File install.ps1 -DryRun
-pwsh -NoProfile -File install.ps1
+npx @looplet/autopro
 ```
 
-Convenience (higher risk — remote bootstrap): see [TRUST.md](./TRUST.md). Pin with `AUTOPRO_REF=v1.1.1`.
+Pin: `npx @looplet/autopro@1.2.0` · if npm 404: `npx --yes github:danielsivyer4567/looplet-autopro-skill`  
+Clone path / trust: [TRUST.md](./TRUST.md) · [README.md](./README.md)
 
 ## Dry-run (no arm)
 

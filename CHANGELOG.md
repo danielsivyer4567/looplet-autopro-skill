@@ -2,6 +2,13 @@
 
 All notable changes to the AutoPro skill package are documented here.
 
+## [1.2.0] — 2026-07-19
+
+### Install
+- **`npx @looplet/autopro`** — short install via npm (`package.json` + `bin/install.mjs`)
+- `preferGlobal: true`; `--dry-run` / `--version` on the installer
+- Until the package is on the registry, use: `npx github:danielsivyer4567/looplet-autopro-skill`
+
 ## [1.1.2] — 2026-07-19
 
 ### Discoverability
