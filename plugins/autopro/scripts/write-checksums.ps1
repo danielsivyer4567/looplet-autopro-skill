@@ -25,6 +25,7 @@ if (-not (Test-Path (Join-Path $skill 'SKILL.md'))) {
 }
 
 $include = @(
+  'SKILL.md',
   'plugins/autopro/SKILL.md',
   'plugins/autopro/scripts/launch-autopro.ps1',
   'plugins/autopro/scripts/launch-showtime.ps1',

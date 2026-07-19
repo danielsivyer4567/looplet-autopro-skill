@@ -2,6 +2,11 @@
 
 All notable changes to the AutoPro skill package are documented here.
 
+## [1.1.2] — 2026-07-19
+
+### Discoverability
+- **Root `SKILL.md`** — package-level skill card so GitHub / skill indexes see a skill at repo root; points at canonical `plugins/autopro/SKILL.md` (marketplace layout)
+
 ## [1.1.1] — 2026-07-19
 
 ### Trust / public review response

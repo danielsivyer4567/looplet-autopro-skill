@@ -13,7 +13,7 @@ how big the request is:
 
 Force anytime: `-autopro serial` · `-autopro ultra` · stop with `-autopro off`.
 
-**Version:** [`VERSION`](./VERSION) (1.1.1+) · **Changelog:** [`CHANGELOG.md`](./CHANGELOG.md) · **Trust:** [`TRUST.md`](./TRUST.md) · **Checksums:** [`SHA256SUMS.txt`](./SHA256SUMS.txt)
+**Version:** [`VERSION`](./VERSION) · **Skill card:** [`SKILL.md`](./SKILL.md) · **Full skill:** [`plugins/autopro/SKILL.md`](./plugins/autopro/SKILL.md) · **Changelog:** [`CHANGELOG.md`](./CHANGELOG.md) · **Trust:** [`TRUST.md`](./TRUST.md) · **Checksums:** [`SHA256SUMS.txt`](./SHA256SUMS.txt)
 
 ---
 
@@ -156,14 +156,15 @@ Offline proof scripts (no LLM):
 ## Repo layout
 
 ```
-plugins/autopro/          ← skill installed to ~/.claude/skills/autopro
-  SKILL.md
+SKILL.md                  ← package-root skill card (discoverability; points here ↓)
+plugins/autopro/          ← CANONICAL skill → installed to ~/.claude/skills/autopro
+  SKILL.md                ← full agent instructions (source of truth)
   scripts/                ← launch-autopro, runner, theater, tests
   theater/                ← Show Time board UI
   references/             ← contracts, workflow, engines
 install.ps1 / install.sh  ← local install (preferred)
 get.ps1 / get.sh          ← convenience remote bootstrap (higher risk)
-VERSION · CHANGELOG.md · TRUST.md
+VERSION · CHANGELOG.md · TRUST.md · SHA256SUMS.txt
 ```
 
 ---

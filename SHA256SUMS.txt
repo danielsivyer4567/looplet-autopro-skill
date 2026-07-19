@@ -1,8 +1,9 @@
 # AutoPro package checksums (SHA-256)
-# Generated: 2026-07-19T12:09:22.3826269Z
+# Generated: 2026-07-19T12:15:36.7874823Z
 # Package root: C:\Users\danie\.agents\skills\autopro
 # Verify: Get-FileHash -Algorithm SHA256 <file>
 
+1f32094f4b10efe7fa52a65ba4321fe0a309f6a2b8d08f12cc8d19f55abc1c26  SKILL.md
 051964a37b445d9b60b0916e037ea6ee384e6c72cb0755d17294373a112f24ac  plugins/autopro/SKILL.md
 83220d047ff6d3677c192c7dc6e93a789cd9ddf7b0de1821c5484eb2e45f4ff8  plugins/autopro/scripts/launch-autopro.ps1
 e73b54bce3fb3b914102b685e280911e102ec2be6607531baac10689812920f3  plugins/autopro/scripts/launch-showtime.ps1
@@ -16,4 +17,4 @@ db2303b2e56c812f70b4859f79bb2a0455cae84adb1317dc0dd9da04138d12ba  install.ps1
 309d98d98453fb4aec4d7c44ea8c915352d2e216a1366e2300cb53081776ede4  install.sh
 36c4843cf7072165a74bab50faf67222ca4ecd18fbdec97b4c07563141ef3798  get.ps1
 81ef666013480b61b2791c0df27a149d73306783b7a43c189f3e7680f9171d49  get.sh
-cc52f678848b814373757b460383bf61960e4943c203735adde0a350b3e50989  VERSION
+77123b8e4bdbd54505bf6e8021527ac60281602a06fe307564532c4dba39dbca  VERSION
