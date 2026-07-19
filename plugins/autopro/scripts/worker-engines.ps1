@@ -23,7 +23,8 @@
 
 #Requires -Version 7.0
 
-$script:AutoproKnownEngines = @('claude', 'codex', 'gemini', 'grok', 'ollama')
+# `stub` is soak/offline only — NEVER in auto order (no real coding).
+$script:AutoproKnownEngines = @('claude', 'codex', 'gemini', 'grok', 'ollama', 'stub')
 $script:AutoproAutoOrderDefault = @('claude', 'codex', 'gemini', 'grok')
 
 function Get-AutoproAutoOrder {
@@ -182,7 +183,7 @@ function New-EngineResolution {
 function Resolve-EngineBinary {
   param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('claude', 'codex', 'gemini', 'grok', 'ollama')]
+    [ValidateSet('claude', 'codex', 'gemini', 'grok', 'ollama', 'stub')]
     [string]$Engine
   )
 
@@ -236,6 +237,18 @@ function Resolve-EngineBinary {
       }
       return (New-EngineResolution -Engine ollama -Available $false -Kind none -Agentic $false `
           -Hint 'Install Ollama from https://ollama.com')
+    }
+    'stub' {
+      # Offline soak worker: marks one ledger slice [done] + commits soak-out/<id>.txt
+      $node = Get-NodeExe
+      $stubJs = Join-Path $PSScriptRoot 'stub-worker.mjs'
+      if ($node -and (Test-Path -LiteralPath $stubJs)) {
+        return (New-EngineResolution -Engine stub -Available $true -Kind node-js -FileName $node `
+            -PrefixArgs @($stubJs) -Display "stub (soak · $stubJs)" -DefaultModel 'stub-soak' `
+            -Hint 'Offline soak worker — pin with -Engine stub (never auto)')
+      }
+      return (New-EngineResolution -Engine stub -Available $false -Kind none `
+          -Hint 'Need node + scripts/stub-worker.mjs for -Engine stub')
     }
   }
 }
@@ -395,6 +408,12 @@ function Build-WorkerArgumentList {
       [void]$args.Add($Prompt)
       return @($args)
     }
+    'stub' {
+      $args = [System.Collections.Generic.List[string]]::new()
+      if ($WorkDir) { [void]$args.Add('--cwd'); [void]$args.Add($WorkDir) }
+      [void]$args.Add('-p'); [void]$args.Add($Prompt)
+      return @($args)
+    }
     default { throw "Build-WorkerArgumentList: unknown engine $engine" }
   }
 }
@@ -407,7 +426,8 @@ function Get-WorkerProcessMatchers {
     @{ Name = 'gemini'; Pattern = 'gemini(\.exe)?|@google\\gemini-cli|bundle\\gemini\.js' }
     @{ Name = 'grok'; Pattern = 'grok(\.exe)?|\\.grok\\bin\\grok' }
     @{ Name = 'ollama'; Pattern = 'ollama(\.exe)?' }
-    @{ Name = 'node-worker'; Pattern = 'node(\.exe)?.+(codex\.js|gemini\.js)' }
+    @{ Name = 'stub'; Pattern = 'stub-worker\.mjs' }
+    @{ Name = 'node-worker'; Pattern = 'node(\.exe)?.+(codex\.js|gemini\.js|stub-worker\.mjs)' }
   )
 }
 
@@ -560,6 +580,7 @@ function Get-EngineRiskLabel {
     'gemini' { return '--approval-mode auto_edit (yolo often admin-disabled)' }
     'grok'   { return '--always-approve + bypassPermissions + -p' }
     'ollama' { return 'local (no remote approvals)' }
+    'stub'   { return 'offline soak (no LLM; one slice per spawn)' }
     default  { return 'engine-specific unattended flags' }
   }
 }

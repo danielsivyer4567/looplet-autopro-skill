@@ -1,13 +1,17 @@
 <#
-  showtime-open-board.ps1 — open Show Time in Looplet extension if present, else browser tab.
+  showtime-open-board.ps1 — open Show Time in ONE browser tab (no junk windows).
 
   Always:
     - Write handoff file (showtime-open.json) for the extension
-    - Open $BoardUrl in Google Chrome; use the default browser only when Chrome is absent
+    - Open $BoardUrl once in Google Chrome (Profile 5 by default)
 
-  Additive (never suppress the browser tab):
-    - Companion POST open hook on :4321 / :4322 if present
-    - chrome-extension:// deep link if Looplet extension ID is known
+  NOT default (caused dual windows + "0.0.0.5" junk tabs):
+    - chrome-extension:// deep link (use -AlsoExtension only if you want it)
+    - Companion open is POST-only (never a second browser launch from us)
+
+  Profile 5 must be passed as ONE argv token ("--profile-directory=Profile 5").
+  A bare Start-Process array can split on the space → Chrome navigates to "5"
+  (tab title often looks like 0.0.0.5) AND the real board next to it.
 
   Extension ID discovery:
     1. Env LOOPLET_EXTENSION_ID
@@ -17,7 +21,9 @@
 param(
   [Parameter(Mandatory = $true)][string]$BoardUrl,
   [string]$SessionId = '',
-  [switch]$NoBrowser
+  [switch]$NoBrowser,
+  # Second Chrome launch for chrome-extension:// — OFF by default (dual-window spam)
+  [switch]$AlsoExtension
 )
 
 $ErrorActionPreference = 'Continue'
@@ -151,30 +157,6 @@ function Test-CompanionOpen([string]$boardUrl) {
   return $false
 }
 
-function Open-ExtensionBoard([string]$extId, [string]$boardUrl) {
-  # NEVER Start-Process chrome-extension:// alone — Windows shows
-  # "Get an app to open this chrome-extension link" (Microsoft Store).
-  # Only open via chrome.exe with the profile that has Looplet loaded.
-  $chrome = Get-ChromePath
-  if (-not $chrome) {
-    Write-Output 'EXTENSION_OPEN_SKIP=no chrome.exe (board page is enough)'
-    return $false
-  }
-  $profile = 'Profile 5'
-  $cfg = Get-ConfigExt
-  if ($cfg -and $cfg.profile) { $profile = [string]$cfg.profile }
-  $u = "chrome-extension://$extId/sidebar/sidebar.html?view=board&showtime=$([uri]::EscapeDataString($boardUrl))"
-  try {
-    Start-Process -FilePath $chrome -ArgumentList @("--profile-directory=$profile", $u) -ErrorAction Stop
-    Write-Output "OPENED_EXTENSION_VIA=$chrome profile=$profile"
-    Write-Output "OPENED_EXTENSION=$u"
-    return $true
-  } catch {
-    Write-Output "EXTENSION_OPEN_WARN=$($_.Exception.Message)"
-    return $false
-  }
-}
-
 function Get-ChromePath {
   foreach ($c in @(
       "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
@@ -199,17 +181,77 @@ function Normalize-BoardUrl([string]$url) {
     $u = [uri]$url
     if ($u.Host -eq 'localhost' -or $u.Host -eq '::1') {
       $port = if ($u.IsDefaultPort) { 8770 } else { $u.Port }
-      return "http://127.0.0.1:$port$($u.PathAndQuery)"
+      $path = $u.PathAndQuery
+      if (-not $path) { $path = '/' }
+      return "http://127.0.0.1:$port$path"
+    }
+    # Already IPv4 loopback — keep as-is but force trailing path
+    if ($u.Host -eq '127.0.0.1') {
+      $path = $u.PathAndQuery
+      if (-not $path) { $path = '/' }
+      $port = if ($u.IsDefaultPort) { 8770 } else { $u.Port }
+      return "http://127.0.0.1:$port$path"
     }
   } catch {}
   return $url
 }
 
+<#
+  Launch Chrome with a single quoted argument string so "Profile 5" cannot split
+  into a second navigation target (the "0.0.0.5" / junk tab bug).
+#>
+function Start-ChromeOnce {
+  param(
+    [Parameter(Mandatory = $true)][string]$ChromeExe,
+    [Parameter(Mandatory = $true)][string]$Profile,
+    [Parameter(Mandatory = $true)][string]$Url,
+    [switch]$NewTab
+  )
+  # Quote profile: --profile-directory="Profile 5"
+  # Quote URL: "http://127.0.0.1:8770/"
+  # --new-tab reuses an existing Chrome process when possible (no second window).
+  $parts = [System.Collections.Generic.List[string]]::new()
+  [void]$parts.Add(('--profile-directory="{0}"' -f ($Profile -replace '"', '')))
+  if ($NewTab) { [void]$parts.Add('--new-tab') }
+  [void]$parts.Add(('"{0}"' -f ($Url -replace '"', '')))
+  $argLine = ($parts -join ' ')
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = $ChromeExe
+  $psi.Arguments = $argLine
+  $psi.UseShellExecute = $false
+  $psi.CreateNoWindow = $true
+  $p = [System.Diagnostics.Process]::Start($psi)
+  Write-Output ("CHROME_ARGS={0}" -f $argLine)
+  return $p
+}
+
+function Open-ExtensionBoard([string]$extId, [string]$boardUrl) {
+  # NEVER Start-Process chrome-extension:// alone — Windows shows
+  # "Get an app to open this chrome-extension link" (Microsoft Store).
+  # Only open via chrome.exe with the profile that has Looplet loaded.
+  $chrome = Get-ChromePath
+  if (-not $chrome) {
+    Write-Output 'EXTENSION_OPEN_SKIP=no chrome.exe (board page is enough)'
+    return $false
+  }
+  $profile = 'Profile 5'
+  $cfg = Get-ConfigExt
+  if ($cfg -and $cfg.profile) { $profile = [string]$cfg.profile }
+  $u = "chrome-extension://$extId/sidebar/sidebar.html?view=board&showtime=$([uri]::EscapeDataString($boardUrl))"
+  try {
+    $null = Start-ChromeOnce -ChromeExe $chrome -Profile $profile -Url $u -NewTab
+    Write-Output "OPENED_EXTENSION_VIA=$chrome profile=$profile"
+    Write-Output "OPENED_EXTENSION=$u"
+    return $true
+  } catch {
+    Write-Output "EXTENSION_OPEN_WARN=$($_.Exception.Message)"
+    return $false
+  }
+}
+
 function Open-BoardInBrowser([string]$url) {
-  # Hard guarantee: open 127.0.0.1 board — GOOGLE CHROME Profile 5 first (Looplet
-  # lives there). Use the system default browser only when Chrome is absent.
-  # Note: do not mix Write-Output with return $bool under assignment — that
-  # swallows status lines. Use $script:BoardPageOpened instead.
+  # ONE open only: 127.0.0.1 board in Chrome Profile 5 (Looplet).
+  # Do not mix Write-Output with return $bool under assignment — use $script:BoardPageOpened.
   $url = Normalize-BoardUrl $url
   $script:BoardPageOpened = $false
   $chrome = Get-ChromePath
@@ -218,21 +260,35 @@ function Open-BoardInBrowser([string]$url) {
   if ($cfg -and $cfg.profile) { $profile = [string]$cfg.profile }
   if ($chrome) {
     try {
-      Start-Process -FilePath $chrome -ArgumentList @("--profile-directory=$profile", $url) -ErrorAction Stop
+      # Prefer --new-tab when any chrome is already running (reuse window).
+      $chromeRunning = [bool](Get-Process -Name 'chrome' -ErrorAction SilentlyContinue | Select-Object -First 1)
+      $null = Start-ChromeOnce -ChromeExe $chrome -Profile $profile -Url $url -NewTab:$chromeRunning
       $script:BoardPageOpened = $true
-      Write-Output "OPENED_PAGE_VIA=$chrome profile=$profile"
+      Write-Output "OPENED_PAGE_VIA=$chrome profile=$profile newTab=$chromeRunning"
       Write-Output "OPENED_PAGE=$url"
       return
     } catch {
       Write-Output "OPEN_CHROME_WARN=$($_.Exception.Message)"
     }
-    # Chrome is installed but could not launch. Never fall through to another browser.
+    # Last try without new-tab flag
+    try {
+      $null = Start-ChromeOnce -ChromeExe $chrome -Profile $profile -Url $url
+      $script:BoardPageOpened = $true
+      Write-Output "OPENED_PAGE_VIA=$chrome profile=$profile (retry no-new-tab)"
+      Write-Output "OPENED_PAGE=$url"
+      return
+    } catch {
+      Write-Output "OPEN_CHROME_RETRY_WARN=$($_.Exception.Message)"
+    }
+    # Chrome is installed but could not launch. Never fall through to another browser
+    # (that was the "random browser next to Chrome" bug).
     return
   } else {
     Write-Output 'OPEN_CHROME_WARN=chrome.exe not found — falling back to default browser'
   }
   try {
-    Start-Process $url -ErrorAction Stop
+    # Explicit http URL only — never a bare host fragment
+    Start-Process -FilePath $url -ErrorAction Stop
     $script:BoardPageOpened = $true
     Write-Output "OPENED_PAGE=$url"
     return
@@ -286,14 +342,16 @@ if (-not $extId) {
 # Always write handoff so extension SW can poll/watch this file later
 Write-Handoff $(if ($extId) { 'extension' } else { 'page' }) $BoardUrl $extId
 
-# 1) ALWAYS open the board page in a real browser tab (primary guarantee).
-#    Prior bug: companion/extension "success" skipped this, so the TV card
-#    appeared in chat while localhost never opened.
+# 1) ONE browser open only — the board page (primary guarantee).
+#    Prior bugs:
+#    - companion/extension "success" skipped this → no localhost tab
+#    - page + extension deep link → TWO windows
+#    - Profile 5 unquoted → junk tab "5" / "0.0.0.5" next to the real board
 $script:BoardPageOpened = $false
 Open-BoardInBrowser $BoardUrl
 $pageOk = [bool]$script:BoardPageOpened
 
-# 2) Best-effort companion open hook (extension focus) — additive only
+# 2) Companion: POST only (handoff). Do not treat companion as a second browser open.
 $companionOk = $false
 if (Test-CompanionOpen $BoardUrl) {
   $companionOk = $true
@@ -302,22 +360,24 @@ if (Test-CompanionOpen $BoardUrl) {
   Write-Output 'COMPANION_OPEN_OK=0'
 }
 
-# 3) Best-effort chrome-extension:// deep link — additive only
+# 3) Extension deep link — OFF by default (dual window). Opt in: -AlsoExtension
 $extOk = $false
-if ($extId) {
+if ($AlsoExtension -and $extId) {
   if (Open-ExtensionBoard $extId $BoardUrl) {
     $extOk = $true
     Write-Output 'EXTENSION_OPEN_OK=1'
   } else {
     Write-Output 'EXTENSION_OPEN_OK=0'
-    Write-Output 'HINT=Extension ID found but OS could not open chrome-extension:// — browser tab is the fallback; Looplet may still read showtime-open.json'
   }
+} elseif ($extId) {
+  Write-Output 'EXTENSION_OPEN_OK=0'
+  Write-Output 'EXTENSION_OPEN_SKIP=default (pass -AlsoExtension for chrome-extension deep link; handoff file is enough)'
 }
 
 if ($pageOk) {
   Write-Output 'OPEN_MODE=page'
 } elseif ($companionOk) {
-  Write-Output 'OPEN_MODE=companion'
+  Write-Output 'OPEN_MODE=companion-only'
 } elseif ($extOk) {
   Write-Output 'OPEN_MODE=extension'
 } else {

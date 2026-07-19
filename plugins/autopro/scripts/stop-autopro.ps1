@@ -90,7 +90,9 @@ Say '==== stop-autopro ===='
 $flagsRemoved = 0
 foreach ($r in $roots) {
   $found = @(Get-ChildItem -Path (Join-Path $r '.claude/scratch/autopro-on*') -File -ErrorAction SilentlyContinue)
-  if ($SessionId) { $found = @($found | Where-Object { $_.Name -eq 'autopro-on' -or $_.Name -eq "autopro-on.$SessionId" }) }
+  # The ultra flag is literally 'autopro-on.ultra' (runId is its CONTENT, not
+  # the filename), so a -SessionId of sess_ultra_<runId> must NOT narrow it out.
+  if ($SessionId) { $found = @($found | Where-Object { $_.Name -eq 'autopro-on' -or $_.Name -eq "autopro-on.$SessionId" -or $_.Name -eq 'autopro-on.ultra' -or $_.Name -like 'autopro-on.band-*' }) }
   if ($found.Count) {
     foreach ($f in $found) {
       Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue
@@ -102,9 +104,11 @@ foreach ($r in $roots) {
   }
 }
 
-# 2) Find runners matching those roots (or any runner if -All)
+# 2) Find runners matching those roots (or any runner if -All). Includes the
+# ultra orchestrators (autopro-ultra.ps1 / ultra-resume.ps1) — killing their
+# tree reaps every band wrapper + engine child in one shot.
 $runners = Get-AutoproProcessList -Names @('pwsh', 'powershell') |
-  Where-Object { $_.CommandLine -and $_.CommandLine -match 'autopro-runner\.ps1' }
+  Where-Object { $_.CommandLine -and $_.CommandLine -match 'autopro-runner\.ps1|autopro-ultra\.ps1|ultra-resume\.ps1' }
 
 $killedRunners = @()
 foreach ($proc in $runners) {
@@ -118,6 +122,54 @@ foreach ($proc in $runners) {
     Say "  warn: could not kill $($proc.ProcessId)"
   }
 }
+
+# 2b) Ultra: the detached orchestrator (autopro-ultra/ultra-resume) writes its
+# PID to ultra-orchestrator.pid and every band's workerPid into ultra-state.json.
+# Kill the orchestrator tree (reaps band wrappers + engine children), then each
+# recorded band pid for already-orphaned/resumed cases. This is what makes
+# `stop-autopro -Root <repo>` actually stop an ultra fleet.
+foreach ($r in @($roots)) {
+  $ultraState = Join-Path $r '.claude/scratch/ultra-state.json'
+  $st = $null
+  if (Test-Path -LiteralPath $ultraState) {
+    try { $st = Get-Content -LiteralPath $ultraState -Raw | ConvertFrom-Json } catch { $st = $null }
+  }
+  # Worktrees + band command lines live under RepoDir, which may differ from
+  # -Root. Add it to the match set so scoped worker/orphan matching still sees them.
+  if ($st -and $st.repoDir -and (Test-Path -LiteralPath ([string]$st.repoDir))) {
+    if (-not ($roots -contains [string]$st.repoDir)) { $roots += [string]$st.repoDir }
+  }
+  $ultraRepoDir = if ($st -and $st.repoDir) { [string]$st.repoDir } else { $r }
+
+  $ultraPidFile = Join-Path $r '.claude/scratch/ultra-orchestrator.pid'
+  if (Test-Path -LiteralPath $ultraPidFile) {
+    $op = 0; try { $op = [int]((Get-Content -LiteralPath $ultraPidFile -Raw).Trim()) } catch {}
+    if ($op -gt 0 -and (Get-Process -Id $op -ErrorAction SilentlyContinue)) {
+      Say "KILL_ULTRA_ORCH PID=$op root=$r"
+      [void](Stop-ProcessTree -Id $op)
+    }
+    Remove-Item -LiteralPath $ultraPidFile -Force -ErrorAction SilentlyContinue
+  }
+  if ($st) {
+    foreach ($b in @($st.bands)) {
+      $bp = 0; if ($b.workerPid) { [void][int]::TryParse([string]$b.workerPid, [ref]$bp) }
+      if ($bp -gt 0 -and (Get-Process -Id $bp -ErrorAction SilentlyContinue)) {
+        Say "KILL_ULTRA_BAND PID=$bp band=$($b.bandId) root=$r"
+        [void](Stop-ProcessTree -Id $bp)
+      }
+    }
+  }
+  # Per-band flags live inside the worktrees (under RepoDir) — clear them so a
+  # resume doesn't think a band is still armed.
+  $wtGlob = Join-Path $ultraRepoDir '.worktrees-ultra'
+  if (Test-Path -LiteralPath $wtGlob) {
+    foreach ($bf in @(Get-ChildItem -Path $wtGlob -Recurse -Filter 'autopro-on.band-*' -File -ErrorAction SilentlyContinue)) {
+      Remove-Item -LiteralPath $bf.FullName -Force -ErrorAction SilentlyContinue
+      Say "BAND_FLAG_REMOVED=$($bf.FullName)"
+    }
+  }
+}
+$roots = @($roots | Select-Object -Unique)
 
 # 3) Orphan workers (claude / codex / gemini / grok / ollama / node cli.js) when parent already dead
 function Test-IsWorkerProc($proc) {
@@ -199,7 +251,7 @@ try {
 # 5) Verify
 Start-Sleep -Milliseconds 400
 $stillRunners = @(Get-AutoproProcessList -Names @('pwsh', 'powershell') |
-  Where-Object { $_.CommandLine -and $_.CommandLine -match 'autopro-runner\.ps1' -and (Test-ProcMatch $_) })
+  Where-Object { $_.CommandLine -and $_.CommandLine -match 'autopro-runner\.ps1|autopro-ultra\.ps1|ultra-resume\.ps1' -and (Test-ProcMatch $_) })
 $stillWorkers = @(Get-AutoproProcessList -Names @('claude', 'node', 'grok', 'ollama', 'codex') |
   Where-Object { (Test-IsWorkerProc $_) -and (Test-ClaudeMatch $_) })
 

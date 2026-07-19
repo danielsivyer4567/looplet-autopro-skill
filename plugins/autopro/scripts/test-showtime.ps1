@@ -54,8 +54,17 @@ $gitRead = @(
   'rev-parse', 'status', 'log', 'ls-files', 'ls-tree', 'show', 'diff',
   'config', 'rev-list', 'merge-base', 'describe', 'symbolic-ref', 'cat-file', 'for-each-ref'
 )
-# `git [-C <path>|-c k=v]* <verb>` — skip leading global flags to reach the verb.
-$gitCall = '(?<![\w-])git(?:\.exe)?\b(?<flags>(?:\s+-(?:C\s+\S+|c\s+\S+))*)\s+(?<verb>[a-z][a-z-]*)'
+# `git [<global-opt>]* <verb>` — skip ANY leading global option to reach the
+# verb. Not just -C/-c: --no-pager, --git-dir=, --work-tree=, -P etc. must be
+# consumed too, or a write verb hidden behind them (`git --no-pager commit`)
+# would produce NO match and slip straight past the honesty gate.
+$gitCall = '(?<![\w-])git(?:\.exe)?\b(?<flags>(?:\s+(?:-C\s+\S+|-c\s+\S+|--[\w-]+(?:=\S+)?|-[A-Za-z]))*)\s+(?<verb>[a-z][a-z-]*)'
+
+# The projector holds ZERO git authority (read-only verbs only). ULTRA is a
+# separate subsystem that legitimately creates git WORKTREES (housing, not
+# lifecycle) — its housing scripts may use `git worktree ...` but are STILL
+# forbidden commit/merge/push/reset/checkout/rebase/branch/switch/restore.
+$ultraHousing = @('autopro-ultra.ps1', 'launch-ultra.ps1', 'ultra-resume.ps1', 'ultra-board-sync.ps1', 'ultra-clean.ps1')
 
 foreach ($gone in @('showtime-worktree.ps1', 'showtime-scoped-commit.ps1')) {
   if (Test-Path -LiteralPath (Join-Path $PSScriptRoot $gone)) {
@@ -82,6 +91,10 @@ foreach ($f in (Get-ChildItem -LiteralPath $PSScriptRoot -Include '*.ps1', '*.mj
   $raw = [regex]::Replace($raw, '(?s)<#.*?#>|/\*.*?\*/', {
       param($m) ($m.Value -replace '[^\r\n]', ' ')
     })
+  # Ultra housing scripts may create/remove WORKTREES (add/remove/list/prune/
+  # move/lock/repair — none touch history) but nothing else. Every other file
+  # (the projector) stays strictly read-only.
+  $allow = if ($ultraHousing -contains $f.Name) { $gitRead + 'worktree' } else { $gitRead }
   $n = 0
   foreach ($line in ($raw -split "\r?\n")) {
     $n++
@@ -89,7 +102,7 @@ foreach ($f in (Get-ChildItem -LiteralPath $PSScriptRoot -Include '*.ps1', '*.mj
     if (-not $code.Trim()) { continue }
     foreach ($m in [regex]::Matches($code, $gitCall)) {
       $verb = $m.Groups['verb'].Value
-      if ($gitRead -notcontains $verb) {
+      if ($allow -notcontains $verb) {
         $writes.Add(("{0}:{1} git {2}" -f $f.Name, $n, $verb))
       }
     }
@@ -108,6 +121,23 @@ if ($baitVerb -eq 'commit') {
   Ok 'disarm: sweep catches the `git -C <dir> commit` idiom'
 } else {
   Bad "disarm: sweep BLIND to `git -C <dir> commit` (matched verb='$baitVerb') — it would not have caught the deleted scripts"
+}
+
+# A write verb hidden behind a leading global option must still be reached.
+$baitNoPager = ([regex]::Match('& git --no-pager commit -m x', $gitCall)).Groups['verb'].Value
+if ($baitNoPager -eq 'commit') {
+  Ok 'disarm: sweep reaches the verb behind `git --no-pager <verb>`'
+} else {
+  Bad "disarm: sweep BLIND to a global option — `git --no-pager commit` matched verb='$baitNoPager'"
+}
+
+# The ultra carve-out must be worktree-ONLY: a lifecycle write in an ultra
+# housing script must STILL fail (worktree allowed, commit/merge/push are not).
+$ultraAllow = $gitRead + 'worktree'
+if (($ultraAllow -contains 'worktree') -and ($ultraAllow -notcontains 'commit') -and ($ultraAllow -notcontains 'merge') -and ($ultraAllow -notcontains 'push')) {
+  Ok 'disarm: ultra carve-out is worktree-only — commit/merge/push still forbidden'
+} else {
+  Bad 'disarm: ultra carve-out leaked a lifecycle verb (commit/merge/push must never be allowed)'
 }
 
 $launchSrc = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'launch-showtime.ps1') -Raw
@@ -349,6 +379,14 @@ try {
   if ($html -match 'h-pac' -and $html -match 'translate3d' -and $html -match 'hide-left') {
     Ok 'pac + canvas + rail markers'
   } else { Bad 'pac/canvas markers' }
+  # SC-03: verify-fail must render as BLOCKED + DISARMED (not "not armed"/98%),
+  # name the SC, offer Re-arm, and fire a distinct fail tone. Check the DISK
+  # source (the live server may be an older boot serving a stale template).
+  $indexSrc = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'theater/index.html') -Raw
+  if ($indexSrc -match "kind:'blocked'" -and $indexSrc -match 'blocked-strip' -and $indexSrc -match 'data-rearm' -and
+    $indexSrc -match 'DISARMED' -and $indexSrc -match 'playFailTone' -and $indexSrc -match '/api/arm') {
+    Ok 'SC-03 blocked/disarmed markers (blocked-strip, DISARMED, Re-arm, fail tone)'
+  } else { Bad 'SC-03 blocked/rearm markers' }
   $logo = Invoke-WebRequest -Uri "$base/assets/looplet-logo.png" -UseBasicParsing -TimeoutSec 5
   if ($logo.StatusCode -eq 200 -and $logo.RawContentLength -gt 100) { Ok 'logo asset 200' } else { Bad 'logo asset' }
 } catch { Bad "UI $_" }

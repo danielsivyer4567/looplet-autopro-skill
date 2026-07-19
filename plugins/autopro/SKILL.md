@@ -1,13 +1,38 @@
 ---
 name: autopro
-description: "One-key autonomous ledger execution with optional Show Time visual board (Looplet). After a ledger exists and is approved, `-autopro` (or `/autopro`) launches a background runner that executes every remaining slice as its own FRESH worker session (true clean context per slice). Default engine is auto: first available of Claude Code → Codex → Gemini CLI → Grok CLI (Ollama opt-in only). Opens Show Time for multi-chat progress, loops until 100% done — then runs check, reports, and disarms. `-autopro off` stops it. Pairs with `ledger` and `work`."
+description: "One skill for autonomous ledger execution + Show Time (Looplet). Default AUTO: pick serial vs ultra from how big the ledger is (open slices). Force with `-autopro serial` or `-autopro ultra`. Serial = one writer, one FRESH worker process per slice. Ultra = parallel bands + worktrees. Same engines, board, stop. `-autopro off` stops it. Pairs with `ledger` and `work`."
 trigger: /autopro
 ---
 
 # autopro + Show Time (Looplet)
 
+**One skill. Size of the request picks concurrency — unless you force it.**
+
+| Call | Mode | What runs |
+|------|------|-----------|
+| `-autopro` / `/autopro` | **auto** (default) | Count open ledger slices: **&lt; 12 → serial**, **≥ 12 → ultra** (tunable) |
+| `-autopro serial` | force **serial** | One writer · one fresh worker process per slice |
+| `-autopro ultra` / `parallel` | force **parallel** | Band orchestrator · worktrees · capped concurrency |
+| `-autopro off` | stop | `stop-autopro.ps1` |
+
+| Open slices (pending + in-progress) | Auto picks |
+|-------------------------------------|------------|
+| 1–11 | **serial** — simpler, safer single writer |
+| 12+ | **ultra** — parallel bands (cap concurrency to ledger size) |
+
+Tune: `-SerialMaxSlices 12` or env `AUTOPRO_SERIAL_MAX_SLICES`.
+
+Front door:
+
+```powershell
+pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/launch-autopro.ps1" `
+  -Root '<repo>' -RepoDir '<repo>' `
+  -AllowDangerousSkipPermissions -IAcceptUnattendedRisk
+# force: -Mode serial | -Mode ultra
+```
+
 `work` does one slice, commits, and stops so you can `/clear` and run `work`
-again. `autopro` removes both manual steps: you type `-autopro` **once**, and a
+again. **Auto/serial** `autopro` removes both manual steps: you type `-autopro` **once**, and a
 background runner drives the ledger to completion on its own.
 
 **Multi-engine (not Claude-only):** the worker is pluggable —
@@ -33,11 +58,16 @@ Canonical scripts live in this skill:
 
 | Script | Role |
 |--------|------|
-| `scripts/launch-showtime.ps1` | Arm flag + Show Time + detach runner (**no git**) |
+| `scripts/launch-autopro.ps1` | **Single entry** — `-Mode serial` (default) or `-Mode ultra` |
+| `scripts/launch-showtime.ps1` | Serial arm: flag + Show Time + detach runner + watch (**no git**) |
+| `scripts/launch-ultra.ps1` | Parallel arm: band orchestrator + worktrees |
+| `scripts/autopro-watch.ps1` | Poll chat-inbox / needs-you (minimized console; keeps human in the loop) |
 | `scripts/arm-on-approve.ps1` | **Door A→B:** after board **Approve**, arm workers in that repo |
-| `scripts/autopro-runner.ps1` | Slice loop (**no git** — the worker commits its own slice) |
+| `scripts/autopro-runner.ps1` | Serial slice loop (**no git** — the worker commits its own slice) |
+| `scripts/autopro-ultra.ps1` | Parallel band loop |
 | `scripts/worker-engines.ps1` | Multi-engine resolve + argv adapters (claude/codex/gemini/grok/ollama) |
 | `scripts/autopro-doctor.ps1` | Preflight engines/ledger/gate (no arm) |
+| `scripts/ultra-clean.ps1` | Reclaim finished/old ultra worktrees (`-RepoDir`, `-OnlyComplete`, `-OlderThanDays`, `-WhatIf`) — worktree remove + prune, never deletes branches/history |
 | `scripts/showtime-final-check.ps1` | Completion gate: decode worker result → green/red verdict |
 
 **Approve vs Arm (read first):** `references/APPROVE-ARM-CONTRACT.md` — board Approve opens arm when the ledger is `Approved: yes`; Show Time is housing only.  
@@ -61,7 +91,7 @@ resolution all branch on the OS. Two things must be true on the host:
    usually **absent on a fresh macOS/Linux**, where the first `pwsh` call would fail with
    `command not found`. Ensure it first (no sudo, user-space):
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/ensure-pwsh.sh"    # prints the pwsh path, installs if missing
+   bash "$HOME/.claude/skills/autopro/scripts/ensure-pwsh.sh"    # prints the pwsh path, installs if missing
    ```
    On Windows, `pwsh` is normally already present (`winget install Microsoft.PowerShell` if not).
 2. **At least one worker CLI on PATH** — `claude` / `codex` / `gemini` / `grok` (or `ollama`,
@@ -69,7 +99,7 @@ resolution all branch on the OS. Two things must be true on the host:
 
 Everywhere below, `$HOME` resolves to the user's home on all three OSes (pwsh sets it on Windows too).
 
-## When you type `-autopro`
+## When you type `-autopro` (serial default)
 
 1. **Preconditions.** Read `.claude/scratch/ledger.md`.
    - No ledger → "Run `ledger` first." Stop.
@@ -79,14 +109,18 @@ Everywhere below, `$HOME` resolves to the user's home on all three OSes (pwsh se
 2. **Arm + Show Time + launch** (run from the repo, on the branch you want the work on):
 
    ```powershell
-   $skill = '${CLAUDE_PLUGIN_ROOT}/scripts'   # auto-resolved to the plugin dir; the one-liner installer rewrites this token
+   $skill = Join-Path $HOME '.claude/skills/autopro/scripts'   # $HOME works on Windows + macOS + Linux
    $root  = '<YOUR-REPO-ROOT>'   # scratch + flag root
    $repo  = $root                                  # ledger lives here
-   & pwsh -NoProfile -File (Join-Path $skill 'launch-showtime.ps1') `
-     -Root $root -RepoDir $repo
+   # Preferred front door (auto size → serial or ultra)
+   & pwsh -NoProfile -File (Join-Path $skill 'launch-autopro.ps1') `
+     -Root $root -RepoDir $repo `
+     -AllowDangerousSkipPermissions -IAcceptUnattendedRisk
+   # Force: -Mode serial | -Mode ultra
+   # Legacy direct: launch-showtime.ps1 / launch-ultra.ps1 still work
    ```
 
-   That script:
+   Serial path (`launch-showtime.ps1`) when auto picks serial or you force it:
    - writes `autopro-on`
    - touches **no git** — no worktree, no branch, no commit (see the contract below)
    - starts **Show Time** server if needed (singleton)
@@ -181,11 +215,11 @@ exits — so the board still looks “on”.
 
 ```powershell
 # One repo
-pwsh -NoProfile -File "${CLAUDE_PLUGIN_ROOT}/scripts/stop-autopro.ps1" `
+pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/stop-autopro.ps1" `
   -Root '<YOUR-REPO-ROOT>'
 
 # Everything on this machine
-pwsh -NoProfile -File "${CLAUDE_PLUGIN_ROOT}/scripts/stop-autopro.ps1" -All
+pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/stop-autopro.ps1" -All
 ```
 
 Soft-only (wait for current slice, no process kill):
@@ -219,10 +253,34 @@ Remove-Item -LiteralPath '<Root>/.claude/scratch/autopro-on' -Force -ErrorAction
 - Show Time heartbeats with **engine + model** credit chips (unless `-NoShowTime`)
 - Preflight fails before arm if no worker CLI is installed (`autopro-doctor.ps1`)
 
+## Supervisor v1 (kickstart + needs-you + chat bridge + watch)
+
+Serial AutoPro used to look “stuck” because **ORCH is desk-only** and the arming chat was left out of the loop. Supervisor v1 adds:
+
+| Piece | Behavior |
+|--------|----------|
+| **Kickstart watchdog** | If the worker **dies within ~12s** with non-zero exit, **retry once** (`KICKSTART_RETRY`). Second early death → `KICKSTART_FAILED` alert. Env: `AUTOPRO_KICKSTART_GRACE_SEC`, `AUTOPRO_KICKSTART_MAX_ATTEMPTS`. |
+| **Honest pids** | Heartbeats send `runnerPid` (conductor) + `workerPid` (coding CLI, 0 between slices). Board: flag owner wins column; inherits disk `autopro-worker.pid` for legs. |
+| **Needs-you alert** | On blocked / verifier red / timeout / kickstart fail / ledger `[blocked]`: write loud files + OS toast (best-effort). |
+| **Chat bridge files** | Repo: `.claude/scratch/AUTOPRO-NEEDS-YOU.md`, `autopro-supervisor-alert.json`, `autopro-chat-inbox.jsonl`. Global: `~/.claude/scratch/autopro-theater/chat-inbox.jsonl` + `needs-you/<sessionId>.md`. |
+| **autopro-watch** | `launch-showtime` starts a **minimized** watch console (disable with `-NoWatch`) that polls the inbox and re-toasts NEEDS YOU. |
+
+**ORCH honesty:** the board ORCH head is still **not** the process that spawns workers — the **runner** is. Supervisor + watch make human-needed events hard to miss.
+
+**Perfected operator workflow:** `references/WORKFLOW.md`.
+
+After arm (if you skipped watch):
+
+```powershell
+pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/autopro-watch.ps1" `
+  -Root "<repo>" -UntilDisarmed -AlsoLog
+```
+
 ## Honest limits
 
 - Show Time visualizes heartbeats/ledger parse — not full token streams
-- Alarms need the browser tab open (Web Audio)
+- Alarms need the browser tab open (Web Audio); OS toast is best-effort
+- Chat bridge is **file-based** (and toast) — it does not inject into Cursor/Grok mid-session unless something polls the inbox
 - Show Time runs **zero git**: it does not branch, commit, merge, or open a PR. Your work lands wherever the worker committed it — the branch you armed from. Use `ship-epic` to open a PR.
 - No worktree isolation: two runners on one repo share a working tree. Single writer per repo.
 - Decomposition quality still governs everything
@@ -230,13 +288,13 @@ Remove-Item -LiteralPath '<Root>/.claude/scratch/autopro-on' -Force -ErrorAction
 ## Tests
 
 ```powershell
-pwsh -NoProfile -File "${CLAUDE_PLUGIN_ROOT}/scripts/test-showtime.ps1"
+pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/test-showtime.ps1"
 ```
 
 ## Multi-host install (Cursor / Claude Desktop / Antigravity / Codex / ChatGPT)
 
 `powershell
-pwsh -NoProfile -File "${CLAUDE_PLUGIN_ROOT}/scripts/install-hosts.ps1" `
+pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/install-hosts.ps1" `
   -RepoDir "<YOUR-REPO-ROOT>"
 `
 

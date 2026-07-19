@@ -42,7 +42,10 @@ param(
   # Kill hung worker processes after N minutes (0 = no wall-clock kill; still use stall alarm)
   [ValidateRange(0, 480)]
   [int]$MaxSliceMinutes = 90,
-  [int]$StaleAfterMinutes = 30
+  [int]$StaleAfterMinutes = 30,
+  # Detach autopro-watch.ps1 so needs-you / chat-inbox events print without a second manual terminal.
+  # Default ON: this is the bridge that keeps the human in the loop after the arming chat stops.
+  [switch]$NoWatch
 )
 
 $ErrorActionPreference = 'Stop'
@@ -742,7 +745,50 @@ Write-Output ''
 Write-Output '  SHOWTIME · ON AIR'
 Write-Output '  Manual log:'
 Write-Output "    Get-Content `"$scratch/autopro.log`" -Wait"
+Write-Output '  Needs-you watch (chat bridge — use if watch was not detached):'
+Write-Output "    pwsh -NoProfile -File `"$SkillScripts/autopro-watch.ps1`" -Root `"$Root`" -UntilDisarmed"
 Write-Output ''
+
+# Start chat-bridge watcher in a minimized console so blocked/kickstart/complete
+# cannot be silent after the arming chat stops. Prefer a real window (human can
+# alt-tab); fall back to job-detached if Start-Process fails.
+$watchPid = 0
+$WatchPs1 = Join-Path $SkillScripts 'autopro-watch.ps1'
+if (-not $NoWatch -and (Test-Path -LiteralPath $WatchPs1)) {
+  try {
+    $wArgs = @(
+      '-NoProfile', '-NoExit', '-File', $WatchPs1,
+      '-Root', $Root,
+      '-UntilDisarmed',
+      '-AlsoLog'
+    )
+    $wp = Start-Process -FilePath $pwshExe -ArgumentList $wArgs -WorkingDirectory $RepoDir `
+      -WindowStyle Minimized -PassThru -ErrorAction Stop
+    if ($wp -and $wp.Id) {
+      $watchPid = [int]$wp.Id
+      Write-Output 'WATCH_DETACH=minimized-console'
+    }
+  } catch {
+    Write-Output ("WATCH_START_WARN {0} — trying detached" -f $_.Exception.Message)
+    try {
+      $watchCmd = '"{0}" -NoProfile -File {1} -Root {2} -UntilDisarmed -AlsoLog' -f `
+        $pwshExe, (Quote-Arg $WatchPs1), (Quote-Arg $Root)
+      $wCreated = Start-DetachedProcess -CommandLine $watchCmd -CurrentDirectory $RepoDir
+      if ($wCreated.ReturnValue -eq 0 -and $wCreated.ProcessId) {
+        $watchPid = [int]$wCreated.ProcessId
+        Write-Output ("WATCH_DETACH={0}" -f $wCreated.How)
+      }
+    } catch {
+      Write-Output ("WATCH_DETACH_WARN {0}" -f $_.Exception.Message)
+    }
+  }
+} elseif ($NoWatch) {
+  Write-Output 'WATCH_DETACH=skipped (-NoWatch)'
+} else {
+  Write-Output 'WATCH_DETACH=skipped (autopro-watch.ps1 missing)'
+}
+Write-Output ("WATCH_PID={0}" -f $watchPid)
+
 Write-Output "SHOWTIME_SESSION=$sessionId"
 Write-Output ("ENGINE={0}" -f $resolvedEngine.Engine)
 Write-Output ("ENGINE_DISPLAY={0}" -f $resolvedEngine.Display)
@@ -759,5 +805,7 @@ Write-Output "VERIFIER_REPAIR_ATTEMPTS=$VerifierRepairAttempts"
 Write-Output ("ALLOW_MODEL_ONLY_FINAL_CHECK={0}" -f $(if ($AllowModelOnlyFinalCheck) { '1' } else { '0' }))
 Write-Output "RISK_ACK=AllowDangerousSkipPermissions+IAcceptUnattendedRisk"
 Write-Output "STATUS_LOG=$RepoDir\.claude/scratch/SHOWTIME-STATUS.md"
-Write-Output 'CHAT_HINT=Chat only: TV card (board URL once on screen) + manual log (theater/showtime-tv-card.md).'
+Write-Output 'CHAT_HINT=Chat only: TV card (board URL once on screen) + manual log + needs-you watch (theater/showtime-tv-card.md).'
+Write-Output ("NEEDS_YOU={0}" -f (Join-Path $scratch 'AUTOPRO-NEEDS-YOU.md'))
+Write-Output ("CHAT_INBOX={0}" -f (Join-Path $scratch 'autopro-chat-inbox.jsonl'))
 Write-Output ("Stop: run {0} -Root `"{1}`" or remove .claude/scratch/autopro-on." -f $StopAutoPro, $Root)

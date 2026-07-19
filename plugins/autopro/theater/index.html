@@ -348,13 +348,59 @@ input,textarea,[contenteditable="true"]{
 .claw-orch-slot{
   display:flex;flex-direction:column;align-items:center;justify-content:center;
   margin:6px 0 4px;padding:8px 0 4px;
-  border-top:1px dashed rgba(251,146,60,.3)
+  border-top:1px dashed rgba(251,146,60,.3);
+  position:relative
+}
+/* Speech cloud next to ORCH face when it has something to say */
+.orch-speech-wrap{
+  display:flex;align-items:flex-start;justify-content:center;gap:8px;
+  margin:6px 0 4px;padding:8px 4px 4px;
+  border-top:1px dashed rgba(251,146,60,.3);position:relative;width:100%
+}
+.orch-speech-bubble{
+  position:relative;max-width:min(200px,46%);flex:0 1 auto;
+  background:linear-gradient(145deg,rgba(255,248,235,.98),rgba(255,236,210,.95));
+  color:#1c1410;border:2px solid rgba(251,146,60,.65);border-radius:16px 16px 16px 6px;
+  padding:8px 10px 8px;box-shadow:0 6px 18px rgba(0,0,0,.35);
+  cursor:pointer;text-align:left;animation:orch-bubble-in .35s ease-out;
+  z-index:4
+}
+.orch-speech-bubble.hold{
+  background:linear-gradient(145deg,rgba(255,251,230,.98),rgba(253,230,138,.92));
+  border-color:rgba(251,191,36,.75);animation:orch-bubble-pulse 1.6s ease-in-out infinite
+}
+.orch-speech-bubble::after{
+  content:''; position:absolute;right:-8px;top:18px;
+  border:8px solid transparent;border-left-color:rgba(251,146,60,.65);
+  border-right:0;margin-top:-2px
+}
+.orch-speech-bubble .os-label{
+  font-size:8px;font-weight:900;letter-spacing:.08em;color:#c2410c;text-transform:uppercase;margin-bottom:3px
+}
+.orch-speech-bubble .os-text{
+  font-size:11px;font-weight:700;line-height:1.35;color:#1c1410;
+  display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden
+}
+.orch-speech-bubble .os-hint{
+  font-size:8px;font-weight:600;color:#9a3412;margin-top:4px;opacity:.85
+}
+@keyframes orch-bubble-in{
+  from{opacity:0;transform:translateY(6px) scale(.92)}
+  to{opacity:1;transform:translateY(0) scale(1)}
+}
+@keyframes orch-bubble-pulse{
+  0%,100%{box-shadow:0 6px 18px rgba(0,0,0,.35)}
+  50%{box-shadow:0 6px 22px rgba(251,191,36,.55)}
 }
 .claw-orch-hold{
   font-size:10px;font-weight:700;color:#fcd34d;line-height:1.35;text-align:center;
   margin:4px 4px 2px;padding:6px 8px;border-radius:8px;
   border:1px solid rgba(251,191,36,.4);background:rgba(251,191,36,.1)
 }
+/* Chat transcript rows in ORCH desk NOTES */
+.qcard.dir-orch{border-color:rgba(251,146,60,.45);background:rgba(251,146,60,.08)}
+.qcard.dir-you{border-color:rgba(94,234,212,.35);background:rgba(94,234,212,.06)}
+.qcard.dir-worker{border-color:rgba(163,230,53,.35);background:rgba(163,230,53,.06)}
 @keyframes orch-sway{
   0%,100%{transform:translateX(0)}
   20%{transform:translateX(-5px)}
@@ -504,7 +550,7 @@ input,textarea,[contenteditable="true"]{
 .claw-node:hover{border-color:rgba(94,234,212,.3)}
 .claw-node .nt{flex:1;min-width:0;line-height:1.3}
 .claw-node .nid{font-family:ui-monospace,Consolas,monospace;color:var(--cyan);font-weight:700;font-size:9px}
-.claw-node .nx{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.claw-node .nx{color:var(--ink);overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;white-space:normal;line-height:1.25;font-size:11px;font-weight:600}
 .claw-node .ns{color:var(--muted);font-size:9px;margin-top:1px}
 .claw-node.done{border-color:rgba(163,230,53,.25)}
 .claw-node.run{border-color:rgba(94,234,212,.35)}
@@ -713,11 +759,34 @@ input,textarea,[contenteditable="true"]{
   Pac lanes: shape = vertical stack of wide horizontal tracks (ref screenshot)
   theme = stainless Show Time (not pure arcade black/neon)
 */
-/* Narrow arcade column — mission status + Pac track share this width */
+/* MAP arcade column — SA groups of little Pac tracks (one Pac per SC) */
 #lanes{
   display:flex;flex-direction:column;gap:18px;
-  width:min(420px, 94vw); min-width:0
+  width:min(480px, 96vw); min-width:0
 }
+/* One mini arcade level per SC slice */
+.lane-slices{display:flex;flex-direction:column;gap:8px;margin-top:4px}
+.slice-pac{
+  display:grid;grid-template-columns:minmax(72px,auto) 1fr;gap:6px 10px;align-items:center;
+  padding:4px 2px 2px
+}
+.slice-pac .sc-id{
+  font:800 10px ui-monospace,Consolas,monospace;letter-spacing:.04em;color:var(--cyan);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px
+}
+.slice-pac .sc-id.done{color:var(--lime)}
+.slice-pac .sc-id.run{color:var(--pac)}
+.slice-pac .sc-id.hold{color:var(--amber)}
+.slice-pac .sc-title{
+  grid-column:1/-1;font-size:10px;color:var(--muted);line-height:1.25;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px 2px
+}
+.slice-pac .track{
+  height:32px;border-radius:16px;position:relative
+}
+.slice-pac .h-pac{width:22px;height:22px;margin-top:-11px}
+.slice-pac .h-pac svg{width:22px;height:22px}
+.slice-pac .pellet{width:7px;height:7px;margin-top:-3.5px}
 /* SC-03: MAP fleet sections (one block per repo root) */
 .map-fleet{
   display:flex;flex-direction:column;gap:10px;
@@ -852,6 +921,24 @@ input,textarea,[contenteditable="true"]{
 .lane.corpse-strip .corpse-label{
   font:800 10px ui-monospace,Consolas,monospace;letter-spacing:.12em;color:#fda4af
 }
+/* SC-03: blocked strip — collapsed BLOCKED lane, no progress crawl, rose+amber */
+.lane.blocked-strip{
+  opacity:.92;padding:8px 12px;
+  border-color:rgba(251,113,133,.5);
+  background:linear-gradient(145deg,rgba(46,20,24,.95),rgba(28,18,20,.9))
+}
+.lane.blocked-strip .track.blocked{
+  height:28px;border-radius:14px;display:flex;align-items:center;justify-content:center;
+  border-color:rgba(251,113,133,.55)
+}
+.lane.blocked-strip .corpse-label{color:#fca5a5}
+.rearm-btn{
+  margin-top:6px;font:800 10px ui-monospace,Consolas,monospace;letter-spacing:.04em;
+  padding:4px 10px;border-radius:7px;cursor:pointer;
+  border:1px solid rgba(94,234,212,.5);color:var(--cyan);background:rgba(94,234,212,.1)
+}
+.rearm-btn:hover{background:rgba(94,234,212,.2)}
+.rearm-btn:disabled{opacity:.5;cursor:wait}
 .lane[data-honesty="projector"] .lane-h .meta{color:var(--muted)}
 .lane[data-honesty="unarmed"]{opacity:.9}
 @media (prefers-reduced-motion:reduce){
@@ -1141,7 +1228,7 @@ body.tab-hidden .claw-icon.running .leg-r{animation-play-state:paused}
         <button type="button" id="btn-claw" role="tab" aria-selected="false">🦞 CLAW</button>
       </div>
       <div class="sync-bar" id="sync-bar" title="Connection · busts browser cache (MAP · LIST · CLAW)">
-        <button type="button" id="btn-purge-dead" title="Remove dead/twin corpse lanes (no live pid)" style="font-size:10px;font-weight:800;padding:4px 8px;border-radius:6px;border:1px solid rgba(251,113,133,.45);color:#fda4af;background:rgba(251,113,133,.1);cursor:pointer">Purge dead</button>
+        <button type="button" id="btn-purge-dead" title="Remove every lane with no live pid (corpses, disarmed, blocked leftovers). Keeps ORCH + live runners." style="font-size:10px;font-weight:800;padding:4px 8px;border-radius:6px;border:1px solid rgba(251,113,133,.45);color:#fda4af;background:rgba(251,113,133,.1);cursor:pointer">Purge dead</button>
         <button type="button" id="btn-sync" aria-label="Force connection and clear browser cache">
           <span class="ico" aria-hidden="true">⟳</span>
           <span>SYNC</span>
@@ -1161,7 +1248,7 @@ body.tab-hidden .claw-icon.running .leg-r{animation-play-state:paused}
   <div id="join-gate" class="join-gate" hidden style="display:none;position:fixed;top:72px;left:50%;transform:translateX(-50%);z-index:9999;max-width:min(920px,94vw);width:100%;pointer-events:auto">
     <div class="join-gate-card" style="background:#1a1208;border:3px solid #f0c040;border-radius:12px;padding:10px 14px;box-shadow:0 0 0 4px rgba(240,192,64,.25),0 8px 40px rgba(0,0,0,.7);color:#f5e6c8;font:13px/1.35 ui-sans-serif,system-ui,sans-serif;animation:join-pulse 1s ease-in-out infinite">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px">
-        <strong style="letter-spacing:.04em;color:#f0c040">🔐 JOIN REQUESTS — approve this FLEET (ORCH + workers for one ledger)</strong>
+        <strong style="letter-spacing:.04em;color:#f0c040">🔐 JOIN REQUESTS — stays up until APPROVE or DENY</strong>
         <span id="join-gate-count" style="opacity:.8;font-size:11px"></span>
       </div>
       <div id="join-gate-list" style="display:flex;flex-direction:column;gap:8px"></div>
@@ -1574,18 +1661,20 @@ function repoLabel(s){
   let n = String(s.repoName || '').trim()
   const id = String(s.repoId || '').trim()
   const path = String(s.primaryRepoPath || s.repoPath || '').replace(/\\/g, '/')
-  const junk = (x) => !x || /^repos?$/i.test(x) || /^sess_/i.test(x) || x === '.worktrees-showtime' || /^fleet_/i.test(x)
+  const junk = (x) => !x || /^repos?$/i.test(x) || /^sess_/i.test(x) || x === '.worktrees-showtime' || x === '.worktrees-ultra' || /^B\d+$/i.test(x) || /^u\d+/i.test(x) || /^fleet_/i.test(x)
   if(junk(n)) n = ''
   if(!n && id && !junk(id)) n = id
   if(!n && path){
     const parts = path.split('/').filter(Boolean)
     const wt = parts.indexOf('.worktrees-showtime')
     if(wt > 0 && !junk(parts[wt - 1]) && !/^repos?$/i.test(parts[wt - 1])) n = parts[wt - 1]
+    const wu = parts.indexOf('.worktrees-ultra')
+    if(wu > 0 && !junk(parts[wu - 1]) && !/^repos?$/i.test(parts[wu - 1])) n = parts[wu - 1]
     // walk up for a real project folder (looplet-producer, Looplet, …)
     if(!n || junk(n) || /^repos?$/i.test(n)){
       for(let i = parts.length - 1; i >= 0; i--){
         const p = parts[i]
-        if(junk(p) || p === '.worktrees-showtime') continue
+        if(junk(p) || p === '.worktrees-showtime' || p === '.worktrees-ultra') continue
         if(/looplet|producer|crm|sidebar|extension/i.test(p)){ n = p; break }
         if(!n) n = p
       }
@@ -1864,21 +1953,76 @@ function armMissionTick(){
   }, 1000)
 }
 
-/** One Pac lane HTML (MAP). Honesty via laneHonesty (SC-02/SC-04). */
+/**
+ * One mini Pac-Man track for a single SC slice.
+ * MAP ref: lots of little Pacs (one level per SC), not one Pac for the whole ledger.
+ */
+function mapSliceTrackHtml(s, t, h){
+  const st = String(t.state || 'pending').toLowerCase()
+  const done = st === 'done'
+  const active = !done && (st === 'in-progress' || (s.slice?.id && t.id === s.slice.id))
+  const blocked = st === 'blocked' || st === 'standby'
+  const idCls = done ? 'done' : (active ? 'run' : (blocked ? 'hold' : ''))
+  // Pac progress on THIS slice only
+  let pacPct = 8
+  if(done) pacPct = 96
+  else if(blocked) pacPct = 42
+  else if(active){
+    // Live crawl while coding; still show mid-track when armed-idle on this SC
+    const crawl = (typeof currentPerimPct === 'function') ? currentPerimPct(s) : 40
+    pacPct = Math.min(88, Math.max(18, Number(crawl) || 40))
+  }
+  const pelletCount = 10
+  let pellets = ''
+  for(let i=0;i<pelletCount;i++){
+    const x = ((i+0.5)/pelletCount)*100
+    const eaten = x < pacPct - 3
+    const dim = !done && !active && !blocked
+    pellets += `<div class="pellet ${eaten?'eaten':''} ${dim&&!eaten?'dim':''}" style="left:calc(${x}% - 3.5px)"></div>`
+  }
+  // Ghost only on blocked / hold slices
+  let ghost = ''
+  if(blocked || (active && (s.needsInput || oq(s).length))){
+    const gi = (s.lane||1) % GHOST.length
+    const gx = Math.min(90, pacPct + 16)
+    ghost = `<div class="ghost-sprite" style="left:calc(${gx}% - 9px);width:18px;height:18px;margin-top:-9px;color:${GHOST[gi]};opacity:.9">${ghostSvg(GHOST[gi])}</div>`
+  }
+  const trackCls = [
+    done ? 'complete' : '',
+    active && h.coding ? 'running' : '',
+    active && !h.coding ? 'queued' : '',
+    blocked ? 'blocked' : '',
+    !done && !active && !blocked ? 'queued' : '',
+  ].filter(Boolean).join(' ')
+  // Pac always drawn per SC (the "lots of little Pac-Mans"); calm unless coding this SC
+  const calm = !(active && h.coding)
+  const pac = (h.showPac !== false)
+    ? pacSpriteHtml(pacPct, calm)
+    : ''
+  const label = `${t.id || '?'}${done?' · CLEAR':(active?(h.coding?' · CODING':' · LIVE'):(blocked?' · HOLD':''))}`
+  const task = String(t.text || t.title || '').trim()
+  return `<div class="slice-pac" data-sid="${esc(s.sessionId)}" data-slice="${esc(t.id||'')}">
+    <div class="sc-id ${idCls}" title="${esc(task)}">${esc(label)}</div>
+    <div class="track ${trackCls}">
+      ${pellets}
+      ${ghost}
+      ${pac}
+    </div>
+    ${task?`<div class="sc-title" title="${esc(task)}">${esc(task)}</div>`:''}
+  </div>`
+}
+
+/** One SA group on MAP: mission + header + one little Pac track per SC. */
 function mapLaneHtml(s){
   const h = laneHonesty(s)
   const {done,total}=pctOfLedger(s)
-  const prog = total>0 ? done/total : (s.progress||0)
   const st=s.status||'running'
   const clear = st==='complete' || (done>=total && total>0)
-  const queued = st==='queued' || (done===0 && st!=='running' && st!=='in-progress' && !s.needsInput && st!=='stalled' && st!=='blocked' && st!=='needs_input')
-  // Pac position from ledger % for everyone (including projectors) — never fake crawl on corpse
-  const pacPct = clear ? 96 : Math.min(0.92, Math.max(0.04, prog || 0.06))*100
   const letter = laneLetter(s.lane)
   const sa = saBadge(s)
   const title = `${esc(sa)} · ${branchTag(s)}`
   const qs=oq(s)
-  // SC-04: corpse → collapsed DEAD strip (no pellets, no progress crawl, no RUNNING)
+  // SC-04: corpse → collapsed DEAD strip
   if(h.kind==='corpse'){
     const sub = [s.stopReason || h.label || 'no writer', 'DEAD'].filter(Boolean).join(' — ')
     const selCls = (selectedId && selectedId===s.sessionId) ? ' sel' : ''
@@ -1893,28 +2037,25 @@ function mapLaneHtml(s){
       <div class="lane-sub">${esc(sub)}</div>
     </div>`
   }
-  let pellets=''
-  const pelletCount = Math.min(24, Math.max(8, total*2 || 8))
-  for(let i=0;i<pelletCount;i++){
-    const x=((i+0.5)/pelletCount)*100
-    const eaten = x < pacPct - 2
-    // Projectors keep ledger pellets; dim only when unarmed/queued/stalled
-    const dim = h.dim || queued || st==='stalled' || h.kind==='unarmed'
-    pellets += `<div class="pellet ${eaten?'eaten':''} ${dim&&!eaten?'dim':''}" style="left:calc(${x}% - 4px)"></div>`
-  }
-  let ghost=''
-  const gi=(s.lane||1)%GHOST.length
-  // Ghosts for blockers / unarmed board — never on owner-coding; projectors stay calm (no twin ghost chase)
-  const needGhost = h.showGhost || (
-    !h.coding && h.kind!=='projector' && (queued || st==='stalled' || st==='blocked' || st==='needs_input')
-  )
-  if(needGhost){
-    const gx = queued ? Math.min(88, 20 + (s.lane||1)*12) : Math.min(90, pacPct+18)
-    ghost = `<div class="ghost-sprite" style="left:calc(${gx}% - 11px);color:${GHOST[gi]};opacity:.85">${ghostSvg(GHOST[gi])}</div>`
+  // SC-03: blocked (verify-fail) → collapsed BLOCKED strip
+  if(h.kind==='blocked'){
+    const sc = h.sc || ''
+    const reason = s.stopReason || 'verification failed'
+    const selCls = (selectedId && selectedId===s.sessionId) ? ' sel' : ''
+    return `<div class="lane blocked-strip${selCls}" data-id="${s.sessionId}" data-honesty="blocked">
+      <div class="lane-h">
+        <div class="name"><span class="letter">${letter}</span> ${title} <span class="dim">· blocked</span></div>
+        <div class="meta stalled">${esc(`${done}/${total} · BLOCKED · DISARMED`)}</div>
+      </div>
+      <div class="track blocked">
+        <span class="corpse-label">${esc(sc?`FAILED on ${sc}`:'BLOCKED')} · DISARMED</span>
+      </div>
+      <div class="lane-sub">${esc([sc?`FAILED on ${sc}`:'FAILED', reason].filter(Boolean).join(' — '))}</div>
+      ${reArmBtnHtml(s)}
+    </div>`
   }
   const flash=(h.coding || h.kind==='owner-idle') && (s.needsInput||qs.length||st==='needs_input')?'qflash':''
   const qprev=qs.length?`<div class="lane-q">? ${esc((qs[0].text||'').slice(0,110))}${qs.length>1?` +${qs.length-1}`:''}</div>`:''
-  // Meta: projector always LEDGER (never twin CLEAR/RUNNING); owner may CLEAR/CODING/…
   let meta = `${done}/${total}`
   let metaCls = ''
   if(h.kind==='projector'){ meta = `${done}/${total} · LEDGER`; metaCls='queued' }
@@ -1923,48 +2064,33 @@ function mapLaneHtml(s){
   else if(h.coding){ meta = `${done}/${total} · CODING`; metaCls='' }
   else if(st==='stalled'||st==='blocked'){ meta = `${done}/${total} · ${st.toUpperCase()}`; metaCls='stalled' }
   else if(st==='needs_input' || s.needsInput || qs.length){ meta = `${done}/${total} · ORCH HOLD`; metaCls='stalled' }
-  else if(queued){ meta = `${done}/${total} · QUEUED`; metaCls='queued' }
   else if(h.kind==='owner-idle'){ meta = `${done}/${total} · IDLE`; metaCls='queued' }
   else { meta = `${done}/${total} · ${h.metaHint||''}`.trim() }
-  const sliceLine = s.slice
-    ? `${s.slice.id} ${s.slice.title||''}`.trim()
-    : (s.stopReason || s.branch || h.label || 'IN PROGRESS')
-  // SC-04: RUNNING only when owner-coding — never status-alone for projectors/corpses/unarmed
-  const statusBits = []
-  if(h.coding) statusBits.push('RUNNING')
-  else if(h.metaHint) statusBits.push(h.metaHint)
-  if(done) statusBits.push(`${done} DONE`)
-  if(s.stopReason && h.kind!=='projector') statusBits.push(s.stopReason)
-  const sub = [sliceLine, statusBits.join(' · ')].filter(Boolean).join(' — ')
-  // Track paint: honesty-gated — projectors/unarmed never get raw "running" chrome
-  const trackCls = [
-    h.coding ? st : (clear && (h.kind==='owner-idle') ? 'complete' : ''),
-    !h.coding && (h.kind==='projector' || h.kind==='unarmed' || queued) ? 'queued' : '',
-    h.coding && clear ? 'complete' : '',
-    h.coding && (st==='stalled'||st==='blocked') ? st : '',
-    h.coding && st==='needs_input' ? 'needs_input' : '',
-  ].filter(Boolean).join(' ')
-  // Pac: show when honesty allows; calm = stiff (no chomp); coding = marching chomp
-  let pacOnTrack = ''
-  if(h.showPac){
-    pacOnTrack = pacSpriteHtml(pacPct, h.pacCalm === true)
-  }
   const kindBadge = h.kind==='projector'
     ? ' <span class="wt-ref" title="separate ledger · projector only">LEDGER</span>'
     : (h.kind==='unarmed' ? ' <span class="wt-ref" title="on board · not armed">BOARD</span>' : '')
   const selCls = (selectedId && selectedId===s.sessionId) ? ' sel' : ''
+
+  // Split ledger into lots of little Pac-Mans (one track per SC)
+  const todos = Array.isArray(s.todo) && s.todo.length
+    ? s.todo
+    : (s.slice ? [{ id:s.slice.id, text:s.slice.title||s.slice.id, state:s.slice.state||'in-progress' }] : [])
+  let slicesHtml = ''
+  if(todos.length){
+    slicesHtml = `<div class="lane-slices" title="One Pac-Man per SC slice">${todos.map(t=>mapSliceTrackHtml(s, t, h)).join('')}</div>`
+  } else {
+    // No SC list yet — single placeholder track
+    slicesHtml = `<div class="lane-slices">${mapSliceTrackHtml(s, { id:'…', text:s.ledgerTitle||'waiting for ledger', state:'pending' }, h)}</div>`
+  }
+
   return `<div class="lane ${flash}${selCls}" data-id="${s.sessionId}" data-honesty="${esc(h.kind)}">
     ${laneMissionHtml(s)}
     <div class="lane-h">
-      <div class="name"><span class="letter">${letter}</span> ${title}${kindBadge} <span class="dim">· Chat ${subAgentNo(s)} · ${esc(s.slice?.id||'work')}</span></div>
+      <div class="name"><span class="letter">${letter}</span> ${title}${kindBadge} <span class="dim">· Chat ${subAgentNo(s)} · ${total} levels</span></div>
       <div class="meta ${metaCls}">${esc(meta)}</div>
     </div>
-    <div class="track ${trackCls}">
-      ${pellets}
-      ${ghost}
-      ${pacOnTrack}
-    </div>
-    <div class="lane-sub">${esc(sub)}</div>
+    ${slicesHtml}
+    <div class="lane-sub">${esc(h.coding ? 'CODING · one active Pac chomps' : (h.label || 'on board'))} · each SC is its own mini Pac track</div>
     ${liveStripHtml(s)}
     ${qprev}
   </div>`
@@ -2435,11 +2561,23 @@ function renderLedges(){
     const sa = saBadge(s)
     const chatN = subAgentNo(s)
     const topicDefault = orchTopicFor(s, qs[0] || null)
-    const notes=(s.notes||[]).slice(0,8).map(n=>`
-      <div class="qcard">
-        <div class="orch-from">ORCH · note re ${esc(sa)}</div>
+    // Full bidirectional transcript (newest first). from=orch|worker|operator
+    const notes=(s.notes||[]).slice(0,16).map(n=>{
+      const fr = String(n.from||'operator').toLowerCase()
+      const isYou = fr==='operator' || fr==='op' || fr==='human'
+      const isWorker = fr==='worker' || fr==='sa' || fr==='subagent'
+      const dir = isYou ? 'dir-you' : isWorker ? 'dir-worker' : 'dir-orch'
+      const who = isYou
+        ? `YOU → ORCH → ${sa}`
+        : isWorker
+          ? `SA → ORCH (re ${sa})`
+          : `ORCH → YOU · re ${sa}`
+      const when = n.at ? String(n.at).slice(11,19) : ''
+      return `<div class="qcard ${dir}" data-note-id="${esc(n.id||'')}">
+        <div class="orch-from">${esc(who)}${when?` · ${esc(when)}`:''}${n.kind?` · ${esc(n.kind)}`:''}</div>
         <div class="orch-q">${esc(n.text)}</div>
-      </div>`).join('')||`<div style="color:var(--muted)">No ORCH notes for ${esc(sa)}</div>`
+      </div>`
+    }).join('')||`<div style="color:var(--muted)">No messages yet for ${esc(sa)} — Tell SA or wait for ORCH hold</div>`
     const qhtml=(s.questions||[]).map(q=>{
       const topic = orchTopicFor(s, q)
       const open = q.status==='open'
@@ -2814,9 +2952,11 @@ function clawSvg(_running=false, _orbit=false){
 function sessionHasWorker(s){
   if(!s) return false
   if(s.corpse) return false
-  // Server single-writer: only the root OWNER may show a live worker
-  if(s.isWorkerOwner === false) return false
+  // Trust live pid probe first — ultra bands can be mis-owned by stale twin joins
+  // but still carry a real workerAlive/pidAlive. Prefer showing the invader.
   if(s.workerAlive === true || s.pidAlive === true) return true
+  // Server single-writer: non-owners without a live pid never draw invaders
+  if(s.isWorkerOwner === false) return false
   if(s.workerAlive === false || s.pidAlive === false) return false
   if(s.workerDead === true) return false
   return false
@@ -2842,21 +2982,46 @@ function isWorkerIdle(s){
  * Never from status alone without a live pid (dead runners often keep status=running).
  */
 function legsShouldRun(s){
-  // Owner-only + live pid + not idle (server sets isWorkerOwner)
-  if(s?.isWorkerOwner === false) return false
   if(s?.corpse) return false
+  // Live pid + coding state — do not require isWorkerOwner (stale twins steal ownership)
   return sessionHasWorker(s) && !isWorkerIdle(s)
 }
 /**
  * Shared MAP/CLAW honesty — keep in sync with scripts/lane-honesty.mjs
  * kind: owner-coding | owner-idle | projector | corpse | unarmed
  */
+/* SC-03: a session is BLOCKED when the runner reported a verify-fail / block
+ * (status 'blocked', or a blocking outcome). Its worker has exited, so it must
+ * read BLOCKED + DISARMED and NAME its failed SC — never the ambiguous
+ * "on board · not armed" (which read like idle) or a progress crawl to done. */
+function sessionBlocked(s){
+  if(!s) return false
+  const st = String(s.status||'').toLowerCase()
+  const outc = String(s.outcome||'').toLowerCase()
+  return st==='blocked' || /verification-failed|slice-no-files|independent-gate-failed|done-without-commit/.test(outc)
+}
+function blockedScLabel(s){ return (s && s.slice && s.slice.id) ? String(s.slice.id) : '' }
+/* Re-arm CTA — POSTs /api/arm (the Approve→Arm bridge) for this session's repo. */
+function reArmBtnHtml(s){
+  const sid = esc(String(s.sessionId||''))
+  if(!sid) return ''
+  return `<button type="button" class="rearm-btn" data-rearm="${sid}" title="Re-arm this fleet — runs the Approve→Arm bridge for its repo (ledger must be Approved: yes)">↻ Re-arm</button>`
+}
+
 function laneHonesty(s){
   if(!s){
     return { kind:'unarmed', showPac:false, showGhost:false, coding:false, dim:true, pacCalm:true, label:'empty', metaHint:'' }
   }
   if(s.corpse && !s.ledgerProjector){
     return { kind:'corpse', showPac:false, showGhost:true, coding:false, dim:true, pacCalm:true, label:'DEAD', metaHint:'DEAD' }
+  }
+  const aliveNow = s.pidAlive === true || s.workerAlive === true
+  // Fail-closed before the projector/unarmed fallbacks: a dead blocked owner
+  // must never crawl a progress arc or read "not armed".
+  if(sessionBlocked(s) && !aliveNow){
+    const sc = blockedScLabel(s)
+    return { kind:'blocked', showPac:false, showGhost:true, coding:false, dim:true, pacCalm:true,
+      label: sc?`BLOCKED · ${sc}`:'BLOCKED', metaHint:'BLOCKED', blocked:true, sc }
   }
   if(s.ledgerProjector || s.isWorkerOwner === false){
     return { kind:'projector', showPac:true, showGhost:false, coding:false, dim:false, pacCalm:true, label:'LEDGER', metaHint:'LEDGER' }
@@ -3159,8 +3324,12 @@ function workerSessions(){
 /** True if this session is the fleet ORCH chat (not a synthetic desk). */
 function isOrchSession(s){
   if(!s) return false
-  if(String(s.role||'').toLowerCase()==='orch') return true
+  const role = String(s.role||'').toLowerCase()
+  if(role==='orch' || role==='orchestrator') return true
   if(s.sessionId && String(s.sessionId).startsWith('orch_')) return true
+  // ultra fleet head: sess_ultra_<runId> without _B0n suffix
+  if(s.sessionId && /^sess_ultra_[^_]+$/i.test(String(s.sessionId))) return true
+  if(String(s.chatLabel||'').toUpperCase()==='ORCH') return true
   return false
 }
 /**
@@ -3211,6 +3380,74 @@ function orchSvg(state){
   return `<div class="claw-orch ${state}" title="ORCH — fleet head">
     ${invaderPixelSvg(3, 'ORCH')}
   </div>`
+}
+
+/**
+ * What ORCH is currently saying to the operator (for speech cloud + desk).
+ * Priority: open SA hold → session.orchSpeech → latest non-operator note.
+ */
+function orchSpeechForSessions(list){
+  const fleet = list || []
+  for(const s of fleet){
+    const q = (s.questions||[]).find(x=>x.status==='open')
+    if(q && q.text){
+      return {
+        kind: 'hold',
+        text: String(q.text),
+        sa: saBadge(s),
+        sid: s.sessionId,
+        at: q.at,
+        from: 'orch',
+        questionId: q.id,
+      }
+    }
+  }
+  let best = null
+  for(const s of fleet){
+    if(s.orchSpeech && s.orchSpeech.text){
+      const cand = {
+        kind: s.orchSpeech.kind || 'say',
+        text: String(s.orchSpeech.text),
+        sa: saBadge(s),
+        sid: s.sessionId,
+        at: s.orchSpeech.at,
+        from: s.orchSpeech.from || 'orch',
+      }
+      if(!best || String(cand.at||'') > String(best.at||'')) best = cand
+    }
+    for(const n of (s.notes||[])){
+      const fr = String(n.from||'').toLowerCase()
+      if(fr==='operator' || fr==='op' || fr==='human') continue
+      if(!n.text) continue
+      const cand = {
+        kind: n.kind || (fr==='worker'?'report':'say'),
+        text: String(n.text),
+        sa: saBadge(s),
+        sid: s.sessionId,
+        at: n.at,
+        from: fr || 'orch',
+      }
+      if(!best || String(cand.at||'') > String(best.at||'')) best = cand
+    }
+  }
+  return best
+}
+
+function orchSpeechBubbleHtml(speech){
+  if(!speech || !speech.text) return ''
+  const short = speech.text.length > 160 ? speech.text.slice(0,157)+'…' : speech.text
+  const hold = speech.kind==='hold'
+  const label = hold
+    ? `ORCH HOLD · ${speech.sa||'SA'}`
+    : (speech.from==='worker' ? `ORCH · report from ${speech.sa||'SA'}` : `ORCH SAYS · ${speech.sa||''}`)
+  return `<button type="button" class="orch-speech-bubble ${hold?'hold':''}"
+      data-orch-speech-sid="${esc(speech.sid||'')}"
+      data-orch-speech-tab="${hold?'questions':'notes'}"
+      title="Open full message in ORCH desk at the bottom">
+    <div class="os-label">${esc(label)}</div>
+    <div class="os-text">${esc(short)}</div>
+    <div class="os-hint">Click → full text + reply at bottom desk</div>
+  </button>`
 }
 
 /** Click any SC-xx row → everything known about that slice, full text, no ellipsis. */
@@ -3389,6 +3626,9 @@ function normalizeRepoKey(repoPath){
   p = p.replace(/\/\.worktrees-showtime\/[^/]+$/i,'')
   p = p.replace(/\/\.claude\/worktrees\/[^/]+$/i,'')
   p = p.replace(/\/\.codex-worktrees\/[^/]+$/i,'')
+  // Ultra parallel: …/.worktrees-ultra/<runId>/<B0n> → real repo (one fleet, many SA)
+  p = p.replace(/\/\.worktrees-ultra\/[^/]+\/[^/]+$/i,'')
+  p = p.replace(/\/\.worktrees-ultra\/[^/]+$/i,'')
   return p.toLowerCase()
 }
 function isJunkBoardSession(s){
@@ -3539,11 +3779,16 @@ function renderClaw(){
       : `<div class="fleet-role-tag">SIDE · ${esc(String(repoBit).slice(0,28))}</div>`
     // Arm / live-worker honesty strip (Door B status)
     const armBits = workersIn(fleetSess).map(s=>{
+      // SC-03: a verify-fail worker is DISARMED, not "not armed". Name its SC.
+      if(sessionBlocked(s) && !(s.pidAlive||s.workerAlive)){
+        const sc = blockedScLabel(s)
+        return `<span class="orch-pill bad" title="${esc(s.stopReason||'verification failed')}">BLOCKED${sc?` · ${esc(sc)}`:''} · DISARMED</span>${reArmBtnHtml(s)}`
+      }
       const st = s.armStatus || (sessionHasWorker(s)?'armed':'board_only')
       const pid = s.pid || s.armPid || ''
       if(st==='arming') return `<span class="orch-pill hold">ARMING…</span>`
       if(st==='armed'||st==='already_armed'||st==='armed_flag_only') return `<span class="orch-pill run">ARMED${pid?` · pid ${esc(String(pid))}`:''}</span>`
-      if(st==='failed') return `<span class="orch-pill bad">ARM FAILED</span>`
+      if(st==='failed') return `<span class="orch-pill bad">ARM FAILED</span>${reArmBtnHtml(s)}`
       if(st==='skipped') return `<span class="orch-pill">no arm</span>`
       if(sessionHasWorker(s)) return `<span class="orch-pill run">LIVE pid ${esc(String(s.pid||'?'))}</span>`
       return `<span class="orch-pill">on board · not armed</span>`
@@ -3556,6 +3801,9 @@ function renderClaw(){
     const holdBanner = headNote
       ? `<div class="claw-orch-hold">${esc(headNote)}</div>`
       : ''
+    // Speech cloud: what ORCH is saying right now (hold / note / worker report)
+    const speech = orchSpeechForSessions(fleetSess)
+    const speechHtml = orchSpeechBubbleHtml(speech)
     // HEAD ORCHESTRATOR card — big ORCH invader under Previous notes (product ref)
     const head = `<div class="claw-head" data-fleet="${esc(g.fleetId)}">
       ${roleTag}
@@ -3571,8 +3819,11 @@ function renderClaw(){
         <div class="hb" style="margin-top:2px">${armBits || '<span class="orch-pill">waiting for worker</span>'}</div>
         ${fleetMissionEmbeddedHtml(fleetSess, brand)}
         <button type="button" class="orch-notes-btn" data-orch-notes="1" title="Open ORCH previous-notes log">Previous notes · ${orchNotes().length}</button>
-        <div class="claw-orch-slot" title="Head orchestrator — humans talk here; SAs report up">
-          ${orchSvg(orchState)}
+        <div class="orch-speech-wrap" title="Head orchestrator — humans talk here; SAs report up">
+          ${speechHtml}
+          <div class="claw-orch-slot" style="border-top:none;margin:0;padding:0">
+            ${orchSvg(orchState)}
+          </div>
         </div>
         ${holdBanner}
         ${clickHereHtml}
@@ -3582,8 +3833,32 @@ function renderClaw(){
     </div>`
 
   const branches = workersIn(fleetSess).map(s=>{
-    // True corpse only (no ledger) — collapse. Ledger projectors keep their stack (shared board).
-    if(s.corpse && !s.ledgerProjector){
+    // SC-03: verify-fail worker → BLOCKED card (names the SC + Re-arm), never a
+    // normal branch that keeps showing a progress crawl.
+    if(sessionBlocked(s) && !(s.pidAlive||s.workerAlive)){
+      const sc = blockedScLabel(s)
+      const reason = s.stopReason || 'verification failed'
+      return `<div class="claw-branch" data-edge="blocked" data-sid="${s.sessionId}">
+        <div class="claw-branch-line"></div>
+        <div class="claw-branch-card" style="border-color:rgba(251,113,133,.5)">
+          <div class="bh">
+            <div>
+              <div class="bt" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                <span class="role-tag" style="border-color:rgba(251,113,133,.6);color:var(--rose)">Blocked</span>
+                <span>${esc(saBadge(s))} · Chat ${subAgentNo(s)}</span>
+                <span class="badge bad">${esc(sc?`FAILED · ${sc}`:'FAILED')}</span>
+                <span class="badge">DISARMED</span>
+              </div>
+              <div class="bm">${esc(reason)}</div>
+            </div>
+          </div>
+          <div style="margin-top:6px">${reArmBtnHtml(s)}</div>
+        </div>
+      </div>`
+    }
+    // True corpse only (no ledger/todos) — collapse. Ultra bands with SC stacks always render.
+    const hasStack = Array.isArray(s.todo) && s.todo.length > 0
+    if(s.corpse && !s.ledgerProjector && !hasStack && !s.ledgerTitle){
       return `<div class="claw-branch" data-edge="stagnant" data-sid="${s.sessionId}" data-corpse="1">
         <div class="claw-branch-line"></div>
         <div class="claw-branch-card" style="opacity:.72;border-color:rgba(251,113,133,.35)">
@@ -3657,11 +3932,15 @@ function renderClaw(){
             : (live && place.show
                 ? 'ONE worker stopped on this SC · clash or issue'
                 : (live ? 'active SC · no invader until armed / coding' : 'pending · next in line')))
-      return `<div class="claw-node ${cls}" data-sid="${s.sessionId}" data-slice="${esc(t.id||'')}" style="${(live||ndone)?`--pct:${slicePct}`:''}" title="${esc(t.id||'')} — ${cardTitle}">
+      // Always show the human task: prefer t.text, fall back to slice title when same id
+      const taskText = String(t.text || '').trim()
+        || (s.slice && t.id === s.slice.id ? String(s.slice.title || '').trim() : '')
+        || '(no task title)'
+      return `<div class="claw-node ${cls}" data-sid="${s.sessionId}" data-slice="${esc(t.id||'')}" style="${(live||ndone)?`--pct:${slicePct}`:''}" title="${esc(t.id||'')} — ${esc(taskText)} · ${cardTitle}">
         ${ringHtml}
         <div class="nt">
           <div class="nid pill">${idLabel}</div>
-          <div class="nx">${esc(t.text||'')}</div>
+          <div class="nx">${esc(taskText)}</div>
           <div class="ns">${nsLabel}</div>
           ${holdNote}
         </div>
@@ -3763,6 +4042,27 @@ function renderClaw(){
       openHandoverModal('orch')
     })
   })
+  // Speech cloud → full message + reply at bottom ORCH desk
+  stage.querySelectorAll('[data-orch-speech-sid]').forEach(btn=>{
+    btn.addEventListener('click',e=>{
+      e.stopPropagation()
+      const sid = e.currentTarget.dataset.orchSpeechSid
+      const tab = e.currentTarget.dataset.orchSpeechTab || 'notes'
+      if(!sid) return
+      setSelectedAgent({ sessionId: sid, role: 'worker', key: 'worker:'+sid })
+      selectedId = sid
+      ledgeTab[sid] = tab
+      dockOpen = true
+      rightOpen = true
+      applyChrome()
+      render()
+      requestAnimationFrame(()=>{
+        const ledge = document.querySelector(`#ledges .ledge[data-id="${CSS.escape(sid)}"]`)
+        if(ledge) ledge.scrollIntoView({ behavior:'smooth', block:'nearest' })
+      })
+      toast('ORCH desk', 'Full message + reply below')
+    })
+  })
   // SC-08: CLICK HERE focuses stuck SA
   stage.querySelectorAll('.orch-click-here').forEach(btn=>{
     btn.addEventListener('click',e=>{
@@ -3774,7 +4074,7 @@ function renderClaw(){
   armNudgeTick()
   stage.querySelectorAll('[data-sid]:not(.claw-node)').forEach(el=>{
     el.addEventListener('click',e=>{
-      if(e.target.closest('.mf-lane-close, .btn-nudge, .orch-click-here')) return
+      if(e.target.closest('.mf-lane-close, .btn-nudge, .orch-click-here, .orch-speech-bubble, [data-orch-speech-sid]')) return
       const sid=el.dataset.sid||el.closest('[data-sid]')?.dataset?.sid
       if(!sid) return
       // SC-05 parity with MAP: select agent so steers/nudge target this sessionId
@@ -4053,14 +4353,27 @@ function markSynced(source, ok=true){
 async function purgeDeadLanes(){
   try{
     const res = await fetchLive('/api/purge-dead', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' })
-    if(!res.ok){ toast('Purge dead failed', String(res.status)); return }
+    if(!res.ok){
+      const t = await res.text().catch(()=> '')
+      toast('Purge dead failed', `${res.status}${t ? ' · ' + t.slice(0,80) : ''}`)
+      return
+    }
     const j = await res.json()
-    toast('Purged dead/twins', `${j.purged||0} removed`)
+    const n = Number(j.purged || 0)
+    // Prefer server-returned sessions so the board updates even if WS broadcast was missed
+    if (Array.isArray(j.sessions)) {
+      sessions = j.sessions
+      if (Array.isArray(j.fleets)) fleets = j.fleets
+      try { render() } catch (_) {}
+    }
+    if (n > 0) toast('Purged dead lanes', `${n} removed`)
+    else toast('Nothing to purge', 'No dead/corpse lanes (live pids kept)')
     refresh('purge-dead', { reconnectLive: false })
   }catch(e){ toast('Purge dead failed', String(e?.message||e)) }
 }
 document.getElementById('btn-purge-dead')?.addEventListener('click', (e)=>{
   e.preventDefault()
+  e.stopPropagation()
   purgeDeadLanes()
 })
 
@@ -4300,6 +4613,16 @@ async function refresh(source='manual', opts={}){
     const j = await res.json()
     sessions = j.sessions||[]
     fleets = Array.isArray(j.fleets) ? j.fleets : []
+    // SC-03: fire the distinct fail tone the moment a lane goes BLOCKED (once
+    // each); clear the flag when it recovers so a later re-block re-alerts.
+    try{
+      for(const s of sessions){
+        if(!s || !s.sessionId) continue
+        if(sessionBlocked(s) && !(s.pidAlive||s.workerAlive)){
+          if(!blockedAlertedIds.has(s.sessionId)){ blockedAlertedIds.add(s.sessionId); playFailTone() }
+        } else { blockedAlertedIds.delete(s.sessionId) }
+      }
+    }catch(e){}
     ensureSelectedAgent()
     // NOT awaited: the projection is supplementary (a strip under each lane),
     // but it reaches out to each repo's companion, which can be slow or dead
@@ -4527,54 +4850,66 @@ let joinAlarmTitleTimer = null
 let joinKnownPending = new Set()
 const JOIN_TITLE_BASE = document.title || 'SHOWTIME'
 
-function stopJoinAlarmAudio(){
+const JOIN_CHIME_URL = '/assets/join-chime.wav'
+let joinChimeAudio = null
+/** Don't kill an in-flight chime when the pending list re-polls empty mid-clip. */
+let joinChimePlayingUntil = 0
+
+function stopJoinAlarmAudio(opts={}){
+  const force = opts.force === true
+  // Never cut the operator's custom line short just because a poll cleared pending
+  if(!force && joinChimePlayingUntil && Date.now() < joinChimePlayingUntil){
+    if(joinAlarmTitleTimer){ clearInterval(joinAlarmTitleTimer); joinAlarmTitleTimer = null }
+    try{ document.title = JOIN_TITLE_BASE }catch{}
+    return
+  }
   try{
-    for(const n of joinAlarmNodes){ try{ n.stop() }catch{} try{ n.disconnect() }catch{} }
+    for(const n of joinAlarmNodes){
+      try{ n.pause?.() }catch{}
+      try{ n.stop?.() }catch{}
+      try{ n.disconnect?.() }catch{}
+    }
+  }catch{}
+  try{
+    if(joinChimeAudio){
+      try{ joinChimeAudio.pause() }catch{}
+      try{ joinChimeAudio.currentTime = 0 }catch{}
+    }
   }catch{}
   joinAlarmNodes = []
+  joinChimeAudio = null
+  joinChimePlayingUntil = 0
   if(joinAlarmTitleTimer){ clearInterval(joinAlarmTitleTimer); joinAlarmTitleTimer = null }
   try{ document.title = JOIN_TITLE_BASE }catch{}
 }
 
-/** Build a short loud WAV (data URI) so HTMLAudio works without file:// access. */
-function joinAlarmWavDataUri(freq=880, ms=280, vol=0.9){
-  const sr = 22050
-  const n = Math.floor(sr * ms / 1000)
-  const data = new ArrayBuffer(44 + n * 2)
-  const v = new DataView(data)
-  const w = (o, s) => { for(let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)) }
-  w(0,'RIFF'); v.setUint32(4, 36+n*2, true); w(8,'WAVE'); w(12,'fmt ')
-  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true)
-  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true)
-  w(36,'data'); v.setUint32(40,n*2,true)
-  for(let i=0;i<n;i++){
-    const t = i/sr
-    const env = i<200 ? i/200 : (i>n-400 ? (n-i)/400 : 1)
-    const sample = Math.sin(2*Math.PI*freq*t) * vol * env
-    v.setInt16(44+i*2, Math.max(-1,Math.min(1,sample)) * 0x7fff, true)
-  }
-  const bytes = new Uint8Array(data)
-  let bin = ''
-  for(let i=0;i<bytes.length;i++) bin += String.fromCharCode(bytes[i])
-  return 'data:audio/wav;base64,' + btoa(bin)
-}
-
-/** ONE short dual-beep in the board tab — not a 12s siren loop. */
+/** ONE join chime in the board tab — full clip, not cut off early. */
 function startJoinAlarmAudio(){
   if(joinAlarmMuted) return
-  stopJoinAlarmAudio()
+  stopJoinAlarmAudio({ force: true })
   try{
-    // Two short notes only
-    const seq = [880, 1175]
-    seq.forEach((freq, i)=>{
-      setTimeout(()=>{
-        if(joinAlarmMuted) return
-        const a = new Audio(joinAlarmWavDataUri(freq, 180, 0.85))
-        a.volume = 0.9
-        a.play().catch(()=>{})
-      }, i * 220)
-    })
-  }catch(e){ console.warn('join html audio', e) }
+    // Cache-bust so browser never keeps the old Motorola clip after we swap the WAV
+    const url = JOIN_CHIME_URL + (JOIN_CHIME_URL.includes('?') ? '&' : '?') + 'v=' + Date.now()
+    joinChimeAudio = new Audio(url)
+    joinChimeAudio.preload = 'auto'
+    joinChimeAudio.volume = 0.95
+    joinChimeAudio.onloadedmetadata = ()=>{
+      const d = Number(joinChimeAudio.duration)
+      if(Number.isFinite(d) && d > 0){
+        joinChimePlayingUntil = Date.now() + Math.ceil(d * 1000) + 400
+      }
+    }
+    joinChimeAudio.onended = ()=>{ joinChimePlayingUntil = 0 }
+    joinChimeAudio.onerror = (e)=> console.warn('join chime error', e)
+    // Hold a hard ref for the whole clip so GC + stopJoinAlarmAudio mid-poll can't mute it
+    joinAlarmNodes.push(joinChimeAudio)
+    // Default pad until metadata lands (shake-and-bake is ~3.2s)
+    joinChimePlayingUntil = Date.now() + 4500
+    const p = joinChimeAudio.play()
+    if(p && typeof p.then === 'function'){
+      p.catch(e=> console.warn('join chime', e))
+    }
+  }catch(e){ console.warn('join chime', e) }
 }
 
 function flashJoinTitle(count){
@@ -4603,7 +4938,7 @@ function notifyJoinOs(pending){
           tag: 'showtime-join',
           requireInteraction: true,
           renotify: true,
-          silent: false, // allow OS sound; we also play our own siren
+          silent: false, // allow OS sound; we also play our own chime
         })
         note.onclick = ()=>{
           try{ window.focus() }catch{}
@@ -4685,10 +5020,55 @@ function armJoinAttention(pending){
 
 document.getElementById('join-mute-btn')?.addEventListener('click', ()=>{
   joinAlarmMuted = true
-  stopJoinAlarmAudio()
+  stopJoinAlarmAudio({ force: true })
   const b = document.getElementById('join-mute-btn')
   if(b) b.textContent = 'Alarm muted'
 })
+
+/* SC-03: one-click Re-arm on a BLOCKED lane → the Approve→Arm bridge (/api/arm).
+ * Delegated once so it works for MAP strips + CLAW cards across every render. */
+document.addEventListener('click', async (e)=>{
+  const btn = e.target.closest ? e.target.closest('[data-rearm]') : null
+  if(!btn) return
+  e.preventDefault(); e.stopPropagation()
+  const sid = btn.getAttribute('data-rearm')
+  if(!sid || btn.disabled) return
+  const prev = btn.textContent
+  btn.disabled = true; btn.textContent = '↻ arming…'
+  try{
+    const r = await fetchLive('/api/arm', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ sessionId: sid })
+    }).then(x=>x.json())
+    if(r && r.ok){ toast('Re-arm requested', 'Approve→Arm bridge invoked — watch the fleet for ARMED.') }
+    else { toast('Re-arm failed', (r && r.error) || 'Re-arm from the shell: launch-showtime.ps1') }
+  }catch(err){
+    toast('Re-arm failed', 'Board could not reach the arm bridge — re-arm from the shell.')
+  }finally{
+    btn.disabled = false; btn.textContent = prev
+    try{ refresh('manual') }catch{}
+  }
+})
+
+/* Distinct fail/stop tone — two DESCENDING square tones (the join chime rises),
+ * so a verify-fail is audibly different. Fired once per newly-blocked lane. */
+let _failAudioCtx = null
+const blockedAlertedIds = new Set()
+function playFailTone(){
+  if(joinAlarmMuted) return
+  try{
+    _failAudioCtx = _failAudioCtx || new (window.AudioContext||window.webkitAudioContext)()
+    const ctx = _failAudioCtx, now = ctx.currentTime
+    ;[[392,0],[196,0.19]].forEach(([f,t])=>{
+      const o = ctx.createOscillator(), g = ctx.createGain()
+      o.type='square'; o.frequency.value=f
+      g.gain.setValueAtTime(0.0001, now+t)
+      g.gain.exponentialRampToValueAtTime(0.16, now+t+0.02)
+      g.gain.exponentialRampToValueAtTime(0.0001, now+t+0.17)
+      o.connect(g); g.connect(ctx.destination)
+      o.start(now+t); o.stop(now+t+0.18)
+    })
+  }catch(e){}
+}
 
 // Unlock audio on first user gesture (browser autoplay policy)
 ;['pointerdown','keydown'].forEach(ev=>{
@@ -4730,7 +5110,7 @@ async function loadJoinRequests(){
       list.innerHTML = ''
       return
     }
-    if(cnt) cnt.textContent = realPending.length + ' waiting'
+    if(cnt) cnt.textContent = realPending.length + ' waiting · not dismissed until you decide'
     list.innerHTML = realPending.map(r=>{
       const repo = r.repoId || (String(r.repoPath||'').replace(/\\/g,'/').split('/').filter(Boolean).slice(-1)[0]) || '?'
       const pathHint = r.repoPath ? String(r.repoPath).replace(/\\/g,'/') : ''
@@ -4740,6 +5120,7 @@ async function loadJoinRequests(){
           <div style="font-weight:800;font-size:14px;color:#ffe08a;letter-spacing:.02em">${esc(repo)}${r.branch?` · ${esc(r.branch)}`:''}</div>
           <div style="font-size:11px;opacity:.85;margin-top:2px">${esc(r.ledgerTitle||r.sessionId||'fleet')}</div>
           ${pathHint?`<div style="font-size:10px;opacity:.55;font-family:ui-monospace,Consolas,monospace;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(pathHint)}">${esc(pathHint)}</div>`:''}
+          <div style="font-size:10px;color:#f0c040;margin-top:4px;font-weight:700">Stays on screen until APPROVE or DENY — arm does not start until you approve.</div>
         </div>
         <div style="display:flex;gap:8px;flex:none">
           <button type="button" data-act="approve" data-id="${r.id}" style="background:#22803a;color:#fff;border:0;border-radius:8px;padding:12px 20px;font-weight:900;font-size:13px;letter-spacing:.06em;cursor:pointer;min-width:110px">APPROVE</button>

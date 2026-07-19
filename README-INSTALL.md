@@ -49,7 +49,7 @@ this OS. (Proven on Windows and Linux/WSL; see `PORT-STATUS.md`.)
 ## Use
 1. Open Claude Code in a repo.
 2. Create + approve a ledger (the `ledger` skill).
-3. Type `/autopro` (or `-autopro`).
+3. Type `/autopro` (or `-autopro`). Default **auto**: small ledgers → serial, large (≥12 open slices) → ultra. Force with `-autopro serial` or `-autopro ultra`.
 4. Stop: `pwsh -NoProfile -File ~/.claude/skills/autopro/scripts/stop-autopro.ps1 -All`
 
 ## Scope note (honest limits)

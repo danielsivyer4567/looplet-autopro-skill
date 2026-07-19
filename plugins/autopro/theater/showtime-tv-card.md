@@ -41,3 +41,10 @@
 ```powershell
 Get-Content ".claude\scratch\autopro.log" -Wait
 ```
+
+**Needs-you watch** (chat bridge — launch usually starts this minimized):
+
+```powershell
+pwsh -NoProfile -File "$HOME/.claude/skills/autopro/scripts/autopro-watch.ps1" `
+  -Root "<YOUR-REPO-ROOT>" -UntilDisarmed -AlsoLog
+```

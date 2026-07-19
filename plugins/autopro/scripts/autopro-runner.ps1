@@ -43,13 +43,26 @@ $SliceVerifierPs1 = Join-Path $PSScriptRoot 'showtime-slice-verifier.ps1'
 $StateRoot = Join-Path ($env:USERPROFILE ?? $HOME) '.claude/scratch/autopro-theater'
 $PortFile = Join-Path $StateRoot 'server.port'
 $workerPidFile = Join-Path $scratch 'autopro-worker.pid'
+# Live coding-agent pid (0 between slices). Board heartbeats publish this separately
+# from runnerPid so Show Time can tell "armed" from "actually coding".
+[int]$script:CurrentWorkerPid = 0
 
 # Merge gate lives in one place, shared with test-showtime.ps1
 . (Join-Path $PSScriptRoot 'showtime-final-check.ps1')
 . (Join-Path $PSScriptRoot 'worker-engines.ps1')
 # Cross-platform process enumeration + tree-kill (Windows path is the same CIM/taskkill as before).
 . (Join-Path $PSScriptRoot 'proc-crossos.ps1')
+# Supervisor v1: kickstart watchdog + needs-you notify + chat inbox bridge
+. (Join-Path $PSScriptRoot 'autopro-supervisor.ps1')
 if (Test-Path -LiteralPath $SliceVerifierPs1) { . $SliceVerifierPs1 }
+
+# Kickstart: if worker dies in the first N seconds with non-zero exit, retry once.
+[int]$script:KickstartGraceSeconds = if ($env:AUTOPRO_KICKSTART_GRACE_SEC) {
+  [int]$env:AUTOPRO_KICKSTART_GRACE_SEC
+} else { 12 }
+[int]$script:KickstartMaxAttempts = if ($env:AUTOPRO_KICKSTART_MAX_ATTEMPTS) {
+  [int]$env:AUTOPRO_KICKSTART_MAX_ATTEMPTS
+} else { 2 }
 
 # The work happens in the repo itself — there is no isolated tree to prefer.
 $WorkDir = $RepoDir
@@ -134,7 +147,12 @@ if (-not $LedgerTitle) { $LedgerTitle = $ledgerIdentity.Title }
 function Log($msg) {
   $line = '[{0}] {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $msg
   Add-Content -LiteralPath $log -Value $line
-  Write-Output $line
+  # Console echo ONLY — must NOT go to the success pipeline. Write-Output here
+  # leaks the log line into the return value of every function that calls Log
+  # before `return`, so a caller like `$hp = Write-Handover ...` receives an
+  # array and stringifies as "System.Object[]" (the SC-03 handover corruption).
+  # Add-Content above is the durable log; Write-Host is the live echo.
+  Write-Host $line
 }
 
 function Get-ShowTimeUrl {
@@ -263,9 +281,16 @@ function Invoke-ShowTime {
     [switch]$Progress,
     [switch]$SliceComplete,
     [string]$Sentinel = '',
-    [string]$HandoverText = ''
+    [string]$HandoverText = '',
+    [string]$SliceId = '',
+    [string]$SliceState = '',
+    [string]$Outcome = ''
   )
   if ($NoShowTime) { return }
+  # Board honesty: runnerPid = conductor (always this process while armed).
+  # workerPid = live coding CLI (0 between slices). pid prefers worker when
+  # coding so ownership + legs track the real agent; falls back to runner.
+  $wPid = [int]$script:CurrentWorkerPid
   $body = @{
     status     = $Status
     ledgerPath = $ledger
@@ -273,7 +298,9 @@ function Invoke-ShowTime {
     ledgerTitle = $LedgerTitle
     handoverPath = $handoverPath
     logPath    = $log
-    pid        = $PID
+    pid        = $(if ($wPid -gt 0) { $wPid } else { $PID })
+    runnerPid  = $PID
+    workerPid  = $wPid
     stats      = (Build-StatsPayload)
   }
   if ($StopReason) { $body.stopReason = $StopReason }
@@ -281,6 +308,15 @@ function Invoke-ShowTime {
   if ($SliceComplete) { $body.sliceComplete = $true }
   if ($Sentinel) { $body.sentinelEntry = @{ text = $Sentinel; level = 'info' } }
   if ($HandoverText) { $body.handoverText = $HandoverText }
+  if ($Outcome) { $body.outcome = $Outcome }
+  # Name the slice + its state so the board can render "BLOCKED on SC-XX"
+  # instead of a stale progress ring on a verify fail (AC2/AC3).
+  if ($SliceId) {
+    $body.slice = @{
+      id    = $SliceId
+      state = $(if ($SliceState) { $SliceState } else { 'in-progress' })
+    }
+  }
 
   if ($Action -eq 'register') {
     $body.sessionId = $SessionId
@@ -536,10 +572,43 @@ function Get-ChangedFilesSince([string]$StartSha) {
   finally { Pop-Location }
 }
 
+function Invoke-SupervisorNeedsYou {
+  param(
+    [Parameter(Mandatory = $true)][string]$Kind,
+    [Parameter(Mandatory = $true)][string]$Summary,
+    [string]$Detail = '',
+    [string]$HandoverPath = '',
+    [hashtable]$Extra = $null
+  )
+  try {
+    $alert = Send-AutoproSupervisorAlert `
+      -ScratchDir $scratch `
+      -Kind $Kind `
+      -Summary $Summary `
+      -Detail $Detail `
+      -SessionId $SessionId `
+      -RepoDir $RepoDir `
+      -HandoverPath $HandoverPath `
+      -LogPath $log `
+      -Extra $Extra
+    Log ("SUPERVISOR_ALERT kind={0} needsYou={1} toast={2}" -f $Kind, $alert.NeedsYouMd, $alert.Toast)
+    try {
+      Invoke-ShowTime -Action heartbeat -Status blocked -StopReason $Kind `
+        -Sentinel ("NEEDS YOU · {0} · see AUTOPRO-NEEDS-YOU.md" -f $Kind)
+    } catch {}
+    return $alert
+  } catch {
+    Log ("SUPERVISOR_ALERT_FAILED: {0}" -f $_.Exception.Message)
+    return $null
+  }
+}
+
 function Invoke-WorkerProcess {
   <#
     Spawn the resolved agent CLI for one prompt (slice / verify / final check).
     Engine-agnostic: uses worker-engines.ps1 resolution + argv builders.
+    Supervisor v1: if the process dies in the kickstart grace window with a
+    non-zero exit, retry once (KICKSTART_RETRY) then alert (KICKSTART_FAILED).
   #>
   param(
     [Parameter(Mandatory = $true)][string]$Prompt,
@@ -563,101 +632,195 @@ function Invoke-WorkerProcess {
   $extraArgs = Build-WorkerArgumentList -Resolution $res -Prompt $Prompt -ModelName $ModelName `
     -WorkDir $WorkDir -SkipPermissions:$SkipPermissions
 
-  $psi = [System.Diagnostics.ProcessStartInfo]::new()
-  $psi.FileName = $res.FileName
-  $psi.WorkingDirectory = $WorkDir
-  $psi.UseShellExecute = $false
-  $psi.CreateNoWindow = $true
-  $psi.RedirectStandardOutput = $true
-  $psi.RedirectStandardError = $true
-  # Always redirect stdin and close immediately (empty EOF). Codex otherwise
-  # blocks on "Reading additional input from stdin…" even with argv prompt.
-  # Prompt stays on argv for codex (stdin-as-`-` hung in Windows smoke tests).
-  $psi.RedirectStandardInput = $true
-  foreach ($a in @($res.PrefixArgs)) {
-    if ($null -ne $a -and [string]$a -ne '') { [void]$psi.ArgumentList.Add([string]$a) }
-  }
-  foreach ($a in $extraArgs) {
-    [void]$psi.ArgumentList.Add([string]$a)
+  $maxAttempts = [Math]::Max(1, $script:KickstartMaxAttempts)
+  $graceSec = [Math]::Max(3, $script:KickstartGraceSeconds)
+  $lastText = ''
+  $lastExit = -1
+  $lastSec = 0.0
+  $lastUsage = $null
+  $lastTimedOut = $false
+  $lastLineCount = 0
+
+  for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = $res.FileName
+    $psi.WorkingDirectory = $WorkDir
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.RedirectStandardInput = $true
+    foreach ($a in @($res.PrefixArgs)) {
+      if ($null -ne $a -and [string]$a -ne '') { [void]$psi.ArgumentList.Add([string]$a) }
+    }
+    foreach ($a in $extraArgs) {
+      [void]$psi.ArgumentList.Add([string]$a)
+    }
+
+    Log ("  engine={0} exe={1} risk={2} kickstartAttempt={3}/{4}" -f $res.Engine, $res.Display, (Get-EngineRiskLabel -Engine $res.Engine), $attempt, $maxAttempts)
+    $proc = [System.Diagnostics.Process]::new()
+    $proc.StartInfo = $psi
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+      $started = $false
+      try { $started = $proc.Start() } catch {
+        Log ("  KICKSTART_START_THROW: {0}" -f $_.Exception.Message)
+        $started = $false
+      }
+      if (-not $started) {
+        if (Should-KickstartRetry -EarlyExit $true -ExitCode 1 -Attempt $attempt -MaxAttempts $maxAttempts) {
+          Log '  KICKSTART_RETRY: process failed to start'
+          try {
+            Invoke-ShowTime -Action heartbeat -Status stalled -StopReason 'Kickstart retry' `
+              -Sentinel ("KICKSTART_RETRY · {0} · start-failed" -f $res.Engine)
+          } catch {}
+          Start-Sleep -Milliseconds 800
+          continue
+        }
+        throw ("{0} process failed to start" -f $res.Engine)
+      }
+      try { $proc.StandardInput.Close() } catch {}
+      try {
+        $script:CurrentWorkerPid = [int]$proc.Id
+        [string]$proc.Id | Set-Content -LiteralPath $workerPidFile -Encoding ascii -Force
+      } catch {
+        $script:CurrentWorkerPid = 0
+      }
+      try {
+        Invoke-ShowTime -Action heartbeat -Status running -Progress `
+          -Sentinel ("Worker pid {0} · {1} · attempt {2}" -f $proc.Id, $res.Engine, $attempt)
+      } catch {}
+
+      $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+      $stderrTask = $proc.StandardError.ReadToEndAsync()
+
+      # --- Kickstart grace: detect instant death ---
+      $kick = Test-WorkerKickstartAlive -Process $proc -GraceSeconds $graceSec
+      if ($kick.EarlyExit) {
+        $stdout = ''; $stderr = ''
+        try { $stdout = $stdoutTask.GetAwaiter().GetResult() } catch {}
+        try { $stderr = $stderrTask.GetAwaiter().GetResult() } catch {}
+        $parts = @()
+        if ($stdout) { $parts += $stdout.TrimEnd("`r", "`n") }
+        if ($stderr) { $parts += $stderr.TrimEnd("`r", "`n") }
+        $text = $parts -join "`n"
+        $code = if ($null -ne $kick.ExitCode) { [int]$kick.ExitCode } elseif ($proc.HasExited) { $proc.ExitCode } else { -1 }
+        Log ("  KICKSTART_EARLY_EXIT code={0} sec={1} attempt={2}" -f $code, $kick.Seconds, $attempt)
+        if (Should-KickstartRetry -EarlyExit $true -ExitCode $code -Attempt $attempt -MaxAttempts $maxAttempts) {
+          Log ("  KICKSTART_RETRY: early death code={0} within {1}s — re-spawning once" -f $code, $graceSec)
+          try {
+            Invoke-ShowTime -Action heartbeat -Status stalled -StopReason 'Kickstart retry' `
+              -Sentinel ("KICKSTART_RETRY · {0} · exit {1}" -f $res.Engine, $code)
+          } catch {}
+          Start-Sleep -Milliseconds 800
+          continue
+        }
+        $usage = Parse-WorkerUsageFromText -Text $text -Engine $res.Engine
+        $lineCount = @($text -split "`r?`n" | Where-Object { $_ }).Count
+        # Exit 0 inside grace = intentional short success (finalizer/tiny work) — not a kickstart fail.
+        if ([int]$code -eq 0) {
+          Log ("  kickstart: early exit 0 in {0}s — treating as short success" -f $kick.Seconds)
+          return [pscustomobject]@{
+            Text      = $text
+            ExitCode  = 0
+            Seconds   = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
+            LineCount = $lineCount
+            Engine    = $res.Engine
+            Usage     = $usage
+            TimedOut  = $false
+            KickstartFailed = $false
+          }
+        }
+        # Final early failure
+        $failMsg = ("Worker died within kickstart grace ({0}s) exit={1} engine={2}" -f $graceSec, $code, $res.Engine)
+        Log ("  KICKSTART_FAILED: {0}" -f $failMsg)
+        $null = Invoke-SupervisorNeedsYou -Kind 'kickstart-failed' -Summary $failMsg -Detail $text `
+          -Extra @{ engine = $res.Engine; exitCode = $code; graceSeconds = $graceSec }
+        return [pscustomobject]@{
+          Text      = $text
+          ExitCode  = $code
+          Seconds   = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
+          LineCount = $lineCount
+          Engine    = $res.Engine
+          Usage     = $usage
+          TimedOut  = $false
+          KickstartFailed = $true
+        }
+      }
+
+      # Still alive past grace — run to completion / timeout
+      $lastHb = [DateTime]::UtcNow
+      $timedOut = $false
+      $maxSec = if ($MaxSliceMinutes -gt 0) { [double]($MaxSliceMinutes * 60) } else { 0.0 }
+      while (-not $proc.WaitForExit(1000)) {
+        $now = [DateTime]::UtcNow
+        if ($maxSec -gt 0 -and $sw.Elapsed.TotalSeconds -ge $maxSec) {
+          $timedOut = $true
+          Log ("  worker TIMEOUT after {0}m — killing pid {1} ({2})" -f $MaxSliceMinutes, $proc.Id, $res.Engine)
+          try {
+            if (Stop-ProcessTree -Id $proc.Id) { Log ("  killed tree pid {0}" -f $proc.Id) }
+            else { throw 'Stop-ProcessTree returned false' }
+          } catch {
+            try { $proc.Kill($true) } catch { try { $proc.Kill() } catch {} }
+          }
+          try {
+            Invoke-ShowTime -Action heartbeat -Status stalled -StopReason ("Worker timeout {0}m" -f $MaxSliceMinutes) `
+              -Sentinel ("TIMEOUT · {0} · {1}m" -f $res.Engine, $MaxSliceMinutes)
+          } catch {}
+          $null = Invoke-SupervisorNeedsYou -Kind 'worker-timeout' `
+            -Summary ("Worker timed out after {0}m ({1})" -f $MaxSliceMinutes, $res.Engine) `
+            -Detail ("pid={0} engine={1}" -f $proc.Id, $res.Engine)
+          break
+        }
+        if (($now - $lastHb).TotalSeconds -ge 45) {
+          $lastHb = $now
+          try {
+            Invoke-ShowTime -Action heartbeat -Status running -Progress `
+              -Sentinel ("{0} · {1} · pid {2} · {3:n0}s" -f $res.Engine, $HeartbeatLabel, $proc.Id, $sw.Elapsed.TotalSeconds)
+          } catch {}
+        }
+      }
+      if (-not $proc.HasExited) {
+        try { $proc.WaitForExit(15000) } catch {}
+      }
+      $stdout = ''
+      $stderr = ''
+      try { $stdout = $stdoutTask.GetAwaiter().GetResult() } catch {}
+      try { $stderr = $stderrTask.GetAwaiter().GetResult() } catch {}
+      $parts = @()
+      if ($stdout) { $parts += $stdout.TrimEnd("`r", "`n") }
+      if ($stderr) { $parts += $stderr.TrimEnd("`r", "`n") }
+      if ($timedOut) { $parts += ("AUTOPRO_WORKER_TIMEOUT=1 maxSliceMinutes={0}" -f $MaxSliceMinutes) }
+      $text = $parts -join "`n"
+      $lines = @($text -split "`r?`n" | Where-Object { $_ -ne '' })
+      for ($i = 0; $i -lt $lines.Count; $i++) {
+        $line = [string]$lines[$i]
+        if ($i -lt 20 -or (($i + 1) % 50) -eq 0 -or $line.Length -lt 400) {
+          Log ("{0}{1}" -f $LogPrefix, $(if ($line.Length -gt 500) { $line.Substring(0, 500) + '…' } else { $line }))
+        }
+      }
+      $usage = Parse-WorkerUsageFromText -Text $text -Engine $res.Engine
+      $exitCode = if ($timedOut) { 124 } elseif ($proc.HasExited) { $proc.ExitCode } else { 124 }
+      return [pscustomobject]@{
+        Text      = $text
+        ExitCode  = $exitCode
+        Seconds   = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
+        LineCount = $lines.Count
+        Engine    = $res.Engine
+        Usage     = $usage
+        TimedOut  = $timedOut
+        KickstartFailed = $false
+      }
+    } finally {
+      $sw.Stop()
+      $script:CurrentWorkerPid = 0
+      try { Remove-Item -LiteralPath $workerPidFile -Force -ErrorAction SilentlyContinue } catch {}
+      try { $proc.Dispose() } catch {}
+    }
   }
 
-  Log ("  engine={0} exe={1} risk={2}" -f $res.Engine, $res.Display, (Get-EngineRiskLabel -Engine $res.Engine))
-  $proc = [System.Diagnostics.Process]::new()
-  $proc.StartInfo = $psi
-  $sw = [System.Diagnostics.Stopwatch]::StartNew()
-  try {
-    if (-not $proc.Start()) { throw ("{0} process failed to start" -f $res.Engine) }
-    try { $proc.StandardInput.Close() } catch {}
-    try {
-      [string]$proc.Id | Set-Content -LiteralPath $workerPidFile -Encoding ascii -Force
-    } catch {}
-    # Drain both pipes asynchronously so a verbose child cannot deadlock while
-    # the parent independently pulses Show Time on wall-clock time.
-    $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
-    $stderrTask = $proc.StandardError.ReadToEndAsync()
-    $lastHb = [DateTime]::UtcNow
-    $timedOut = $false
-    $maxSec = if ($MaxSliceMinutes -gt 0) { [double]($MaxSliceMinutes * 60) } else { 0.0 }
-    while (-not $proc.WaitForExit(1000)) {
-      $now = [DateTime]::UtcNow
-      if ($maxSec -gt 0 -and $sw.Elapsed.TotalSeconds -ge $maxSec) {
-        $timedOut = $true
-        Log ("  worker TIMEOUT after {0}m — killing pid {1} ({2})" -f $MaxSliceMinutes, $proc.Id, $res.Engine)
-        try {
-          # Kill tree: node-spawned CLIs may leave grandchildren. Cross-OS (Windows=taskkill).
-          if (Stop-ProcessTree -Id $proc.Id) { Log ("  killed tree pid {0}" -f $proc.Id) }
-          else { throw 'Stop-ProcessTree returned false' }
-        } catch {
-          try { $proc.Kill($true) } catch { try { $proc.Kill() } catch {} }
-        }
-        try {
-          Invoke-ShowTime -Action heartbeat -Status stalled -StopReason ("Worker timeout {0}m" -f $MaxSliceMinutes) `
-            -Sentinel ("TIMEOUT · {0} · {1}m" -f $res.Engine, $MaxSliceMinutes)
-        } catch {}
-        break
-      }
-      if (($now - $lastHb).TotalSeconds -ge 45) {
-        $lastHb = $now
-        try {
-          Invoke-ShowTime -Action heartbeat -Status running -Progress -Sentinel ("{0} · {1} · {2:n0}s" -f $res.Engine, $HeartbeatLabel, $sw.Elapsed.TotalSeconds)
-        } catch {}
-      }
-    }
-    if (-not $proc.HasExited) {
-      try { $proc.WaitForExit(15000) } catch {}
-    }
-    $stdout = ''
-    $stderr = ''
-    try { $stdout = $stdoutTask.GetAwaiter().GetResult() } catch {}
-    try { $stderr = $stderrTask.GetAwaiter().GetResult() } catch {}
-    $parts = @()
-    if ($stdout) { $parts += $stdout.TrimEnd("`r", "`n") }
-    if ($stderr) { $parts += $stderr.TrimEnd("`r", "`n") }
-    if ($timedOut) { $parts += ("AUTOPRO_WORKER_TIMEOUT=1 maxSliceMinutes={0}" -f $MaxSliceMinutes) }
-    $text = $parts -join "`n"
-    $lines = @($text -split "`r?`n" | Where-Object { $_ -ne '' })
-    for ($i = 0; $i -lt $lines.Count; $i++) {
-      $line = [string]$lines[$i]
-      if ($i -lt 20 -or (($i + 1) % 50) -eq 0 -or $line.Length -lt 400) {
-        Log ("{0}{1}" -f $LogPrefix, $(if ($line.Length -gt 500) { $line.Substring(0, 500) + '…' } else { $line }))
-      }
-    }
-    $usage = Parse-WorkerUsageFromText -Text $text -Engine $res.Engine
-    $exitCode = if ($timedOut) { 124 } elseif ($proc.HasExited) { $proc.ExitCode } else { 124 }
-    return [pscustomobject]@{
-      Text      = $text
-      ExitCode  = $exitCode
-      Seconds   = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
-      LineCount = $lines.Count
-      Engine    = $res.Engine
-      Usage     = $usage
-      TimedOut  = $timedOut
-    }
-  } finally {
-    $sw.Stop()
-    try { Remove-Item -LiteralPath $workerPidFile -Force -ErrorAction SilentlyContinue } catch {}
-    $proc.Dispose()
-  }
+  # Should not reach: loop always returns or throws
+  throw ("Worker kickstart exhausted {0} attempts" -f $maxAttempts)
 }
 
 # Back-compat alias (older call sites / docs)
@@ -813,17 +976,64 @@ function Write-Handover {
     $finalTail = @(([string]$FinalCheck.Text -split "`r?`n") | Select-Object -Last 80)
   }
 
+  $ledgerText = ''
+  try {
+    if (Test-Path -LiteralPath $ledger) {
+      $ledgerText = Get-Content -LiteralPath $ledger -Raw -ErrorAction SilentlyContinue
+    }
+  } catch { $ledgerText = '' }
+
+  $inv = $null
+  try {
+    if ($ledgerText) { $inv = Get-LedgerSliceInventory -LedgerText $ledgerText }
+  } catch { $inv = $null }
+
+  $stillTodo = [System.Collections.Generic.List[string]]::new()
+  if ($inv) {
+    foreach ($s in @($inv.Pending)) {
+      [void]$stillTodo.Add(("Ledger slice still [pending]: {0} — {1}" -f $s.Id, $s.Title))
+    }
+    foreach ($s in @($inv.InProgress)) {
+      [void]$stillTodo.Add(("Ledger slice still [in-progress]: {0} — {1}" -f $s.Id, $s.Title))
+    }
+    foreach ($s in @($inv.Blocked)) {
+      [void]$stillTodo.Add(("Ledger slice [blocked]: {0} — {1}" -f $s.Id, $s.Title))
+    }
+    foreach ($line in @($inv.OutOfScope)) {
+      $t = $line -replace '^\s*[-*]\s*', '' -replace '^\s*\d+\.\s*', ''
+      if ($t) { [void]$stillTodo.Add(("Out of scope (next epic): {0}" -f $t)) }
+    }
+    foreach ($line in @($inv.AfterDone)) {
+      $t = $line -replace '^\s*[-*]\s*', '' -replace '^\s*\d+\.\s*', ''
+      if ($t) { [void]$stillTodo.Add(("After 100% checklist: {0}" -f $t)) }
+    }
+  }
+  if ($Outcome -ne 'complete') {
+    [void]$stillTodo.Add(("AutoPro outcome was ``{0}`` — not a clean complete; fix before treating epic as shipped." -f $Outcome))
+  }
+  if (-not $finalGreen -and $FinalCheck) {
+    [void]$stillTodo.Add('Final check was not green — re-run check skill / independent gate.')
+  }
+  try {
+    $hints = Get-WiringStillTodoHints -LedgerText $ledgerText -Notes $Notes -ExtraLines @($finalTail)
+    foreach ($h in @($hints)) { [void]$stillTodo.Add($h) }
+  } catch {}
+  # Always remind ops reality
+  [void]$stillTodo.Add('Confirm secrets/env on the target host (never assume AutoPro wrote production secrets).')
+  [void]$stillTodo.Add('Confirm deploy/CI and any Supabase · edge functions · CORS · Engine pin on the environment that will run this tip.')
+
   $sb = New-Object System.Text.StringBuilder
   [void]$sb.AppendLine('# SHOWTIME HANDOVER')
   [void]$sb.AppendLine('')
-  [void]$sb.AppendLine("| | |")
-  [void]$sb.AppendLine("|--|--|")
+  [void]$sb.AppendLine('| | |')
+  [void]$sb.AppendLine('|--|--|')
   [void]$sb.AppendLine("| Session | ``$SessionId`` |")
   [void]$sb.AppendLine("| Outcome | ``$Outcome`` |")
   [void]$sb.AppendLine("| Ledger | $LedgerTitle |")
   [void]$sb.AppendLine("| Ledger hash | ``$LedgerHash`` |")
   [void]$sb.AppendLine("| Repo | ``$RepoDir`` |")
   [void]$sb.AppendLine("| Branch | ``$(Get-CurrentBranch)`` |")
+  [void]$sb.AppendLine("| Engine | ``$($script:EngineId)`` |")
   [void]$sb.AppendLine("| Final check exit | ``$finalExit`` |")
   [void]$sb.AppendLine("| Final check green | ``$finalGreen`` |")
   [void]$sb.AppendLine("| Git | ``Show Time runs zero git — the worker committed to the branch above`` |")
@@ -832,13 +1042,53 @@ function Write-Handover {
     [void]$sb.AppendLine("| Counts | done=$($counts.Done), pending=$($counts.Pending), in-progress=$($counts.InProgress), blocked=$($counts.Blocked) |")
   }
   [void]$sb.AppendLine('')
-  [void]$sb.AppendLine('## Summary')
+  [void]$sb.AppendLine('## Orchestrator report')
   [void]$sb.AppendLine('')
-  [void]$sb.AppendLine("- Outcome: ``$Outcome``")
-  [void]$sb.AppendLine("- Handover was written before board completion/clear.")
-  [void]$sb.AppendLine("- Token stats: input=$($stats.tokens.input), output=$($stats.tokens.output), total=$($stats.tokens.total), saved=$($stats.tokens.saved)")
-  if ($Notes) { [void]$sb.AppendLine("- Notes: $Notes") }
+  [void]$sb.AppendLine('This handover is the **runner/orchestrator report** for the arming human and the next chat.')
+  [void]$sb.AppendLine('ORCH on the board is desk-only; this file is the durable handoff.')
   [void]$sb.AppendLine('')
+  if ($Outcome -eq 'complete' -and $finalGreen) {
+    [void]$sb.AppendLine('- **Ledger status:** AutoPro marks the epic **complete** (final check green + independent gate if configured).')
+  } elseif ($Outcome -eq 'complete') {
+    [void]$sb.AppendLine('- **Ledger status:** AutoPro claimed complete but final check marker was not green — treat as **incomplete**.')
+  } else {
+    [void]$sb.AppendLine(("- **Ledger status:** AutoPro **stopped early** (`{0}`). Do not ship until resolved." -f $Outcome))
+  }
+  [void]$sb.AppendLine(("- **Token stats:** input={0}, output={1}, total={2}, saved={3}" -f $stats.tokens.input, $stats.tokens.output, $stats.tokens.total, $stats.tokens.saved))
+  if ($Notes) { [void]$sb.AppendLine(("- **Notes:** {0}" -f $Notes)) }
+  [void]$sb.AppendLine('')
+
+  [void]$sb.AppendLine('## Slice inventory')
+  [void]$sb.AppendLine('')
+  if ($inv -and $inv.Slices.Count) {
+    [void]$sb.AppendLine('| Id | Title | Status |')
+    [void]$sb.AppendLine('|----|-------|--------|')
+    foreach ($s in $inv.Slices) {
+      [void]$sb.AppendLine(("| {0} | {1} | `{2}` |" -f $s.Id, ($s.Title -replace '\|', '/'), $s.Status))
+    }
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine(('- Done: **{0}** · Pending: **{1}** · In-progress: **{2}** · Blocked: **{3}**' -f `
+        $inv.Done.Count, $inv.Pending.Count, $inv.InProgress.Count, $inv.Blocked.Count))
+  } else {
+    [void]$sb.AppendLine('_Could not parse slice headings from ledger.md (expected `## SC-NN — title [status]`)._')
+  }
+  [void]$sb.AppendLine('')
+
+  [void]$sb.AppendLine('## Incomplete / missing from this run')
+  [void]$sb.AppendLine('')
+  $missing = @()
+  if ($inv) {
+    $missing = @($inv.Pending) + @($inv.InProgress) + @($inv.Blocked)
+  }
+  if ($missing.Count) {
+    foreach ($s in $missing) {
+      [void]$sb.AppendLine(("- `{0}` **{1}** — {2}" -f $s.Status, $s.Id, $s.Title))
+    }
+  } else {
+    [void]$sb.AppendLine('- No pending / in-progress / blocked slices left in the ledger parse.')
+  }
+  [void]$sb.AppendLine('')
+
   [void]$sb.AppendLine('## Final Check Tail')
   [void]$sb.AppendLine('')
   if ($finalTail.Count) {
@@ -859,17 +1109,39 @@ function Write-Handover {
     [void]$sb.AppendLine('_No runner log captured._')
   }
   [void]$sb.AppendLine('')
-  [void]$sb.AppendLine('## Required Follow-up')
+  [void]$sb.AppendLine('## Required follow-up (orchestrator)')
   [void]$sb.AppendLine('')
-  if ($Outcome -eq 'complete') {
-    [void]$sb.AppendLine('- None from AutoPro finalizer.')
+  if ($Outcome -eq 'complete' -and $finalGreen) {
+    [void]$sb.AppendLine('- AutoPro finalizer is green for this ledger. Review the red **STILL TO DO** block before production.')
   } else {
-    [void]$sb.AppendLine('- Resolve the finalizer outcome above before considering this ledger complete.')
+    [void]$sb.AppendLine('- Resolve the outcome above, fix blocked slices / env, then re-arm AutoPro or finish manually with `work`.')
   }
+  [void]$sb.AppendLine('- Open `AUTOPRO-NEEDS-YOU.md` if the supervisor raised a needs-you alert.')
+  [void]$sb.AppendLine('- Show Time does **not** open PRs or deploy — use `ship-epic` / your deploy path.')
+
+  # --- RED STILL TO DO (always last) ---
+  $red = Format-StillTodoRedHtml -Items @($stillTodo | Select-Object -Unique) -Outcome $Outcome
+  [void]$sb.AppendLine($red)
 
   New-Item -ItemType Directory -Force -Path (Split-Path $handoverPath -Parent) | Out-Null
   Set-Content -LiteralPath $handoverPath -Value $sb.ToString() -Encoding utf8
   Log ("handover: wrote {0}" -f $handoverPath)
+
+  # Always notify on non-complete; on complete still write a softer complete event to chat inbox.
+  if ($Outcome -ne 'complete') {
+    try {
+      $null = Invoke-SupervisorNeedsYou -Kind $Outcome -Summary ("AutoPro stopped: {0}" -f $Outcome) `
+        -Detail $Notes -HandoverPath $handoverPath
+    } catch {}
+  } else {
+    try {
+      $null = Send-AutoproSupervisorAlert -ScratchDir $scratch -Kind 'complete' `
+        -Summary ("AutoPro complete: {0} — review STILL TO DO (red) in handover" -f $LedgerTitle) `
+        -Detail ("Handover: {0}" -f $handoverPath) -SessionId $SessionId -RepoDir $RepoDir `
+        -HandoverPath $handoverPath -LogPath $log -Extra @{ outcome = 'complete'; finalGreen = $finalGreen } `
+        -NeedsHuman:$false
+    } catch {}
+  }
   return $handoverPath
 }
 
@@ -1129,6 +1401,9 @@ while ($true) {
     Log ("STOP: {0} slice(s) [blocked]" -f $c.Blocked)
     Invoke-StatusLog -Action event -Level block -Event ("{0} slice(s) [blocked] — runner stopped" -f $c.Blocked)
     Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'Ledger has blocked slices' -Sentinel 'Blocked slice detected'
+    $hp = Write-Handover -Outcome 'ledger-blocked' -Notes ("{0} slice(s) marked [blocked] in ledger.md — edit reasons, then re-arm." -f $c.Blocked)
+    Publish-Handover -Path $hp -Outcome 'ledger-blocked'
+    Write-SessionState -State 'blocked' -Outcome 'ledger-blocked' -Handover $hp
     break
   }
 
@@ -1252,6 +1527,9 @@ If no pending slices remain, report all done and stop.
     Log ("STOP: Invoke-Slice threw: {0}" -f $_.Exception.Message)
     Write-SessionState -State 'blocked' -Outcome 'slice-throw'
     Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'Slice threw' -Sentinel $_.Exception.Message
+    $hp = Write-Handover -Outcome 'slice-throw' -Notes $_.Exception.Message
+    Publish-Handover -Path $hp -Outcome 'slice-throw'
+    Write-SessionState -State 'blocked' -Outcome 'slice-throw' -Handover $hp
     Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
     break
   }
@@ -1266,6 +1544,25 @@ If no pending slices remain, report all done and stop.
     for ($verifyAttempt = 1; $verifyAttempt -le ($VerifierRepairAttempts + 1); $verifyAttempt++) {
       $verifyResult = Invoke-SliceVerification -StartSha $verifyStartSha -SliceId $sliceInfo.Id -SliceTitle $sliceInfo.Title -Attempt $verifyAttempt
       if ($verifyResult.Green) { break }
+
+      # AC5 — files=0 short-circuit. When the worker landed NO files for this
+      # slice, a repair session has nothing to fix: it exits in <2s with 0
+      # tokens and re-reds instantly (the SC-03 incident). Block immediately
+      # with an honest message instead of burning a useless repair attempt.
+      $landedFiles = @($verifyResult.ChangedFiles).Count
+      if ($landedFiles -eq 0) {
+        $verificationBlocked = $true
+        $noFilesMsg = "Worker landed no files for $($sliceInfo.Id) — nothing to repair. Re-run the slice, or mark it [done] if the repo already passes its tests."
+        Log ("VERIFY_STOP: {0} landed 0 files — skipping repair loop" -f $sliceInfo.Id)
+        $hp = Write-Handover -Outcome 'slice-no-files' -Notes $noFilesMsg
+        Publish-Handover -Path $hp -Outcome 'slice-no-files'
+        Write-SessionState -State 'blocked' -Outcome 'slice-no-files' -Handover $hp
+        Invoke-StatusLog -Action event -Level block -Event ("Slice landed no files: {0}; handover={1}" -f $sliceInfo.Id, $hp)
+        Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'Worker landed no files' `
+          -SliceId $sliceInfo.Id -SliceState blocked -Outcome 'slice-no-files' -Sentinel $noFilesMsg
+        Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
+        break
+      }
 
       if ($verifyAttempt -le $VerifierRepairAttempts) {
         $verifyReport = Get-SliceVerifierDecodedText $verifyResult
@@ -1297,7 +1594,9 @@ $verifyReport
       Publish-Handover -Path $hp -Outcome 'slice-verification-failed'
       Write-SessionState -State 'blocked' -Outcome 'slice-verification-failed' -Handover $hp
       Invoke-StatusLog -Action event -Level block -Event ("Slice verifier red: {0}; handover={1}" -f $sliceInfo.Id, $hp)
-      Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'Slice verification failed' -Sentinel ("Verifier RED · {0} · handover {1}" -f $sliceInfo.Id, $hp)
+      Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'Slice verification failed' `
+        -SliceId $sliceInfo.Id -SliceState blocked -Outcome 'slice-verification-failed' `
+        -Sentinel ("Verifier RED · {0} · handover {1}" -f $sliceInfo.Id, $hp)
       Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
       break
     }
@@ -1323,6 +1622,9 @@ $verifyReport
       Write-SessionState -State 'blocked' -Outcome 'zero-progress-abort'
       Invoke-StatusLog -Action event -Level block -Event ("Zero-progress abort after {0} slices" -f $script:ZeroProgressStreak)
       Invoke-ShowTime -Action heartbeat -Status blocked -StopReason 'Zero-progress abort' -Sentinel 'Consecutive empty slices'
+      $hp = Write-Handover -Outcome 'zero-progress-abort' -Notes ("{0} consecutive slices with no ledger move and no code delta." -f $script:ZeroProgressStreak)
+      Publish-Handover -Path $hp -Outcome 'zero-progress-abort'
+      Write-SessionState -State 'blocked' -Outcome 'zero-progress-abort' -Handover $hp
       Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue
       break
     }
@@ -1331,4 +1633,17 @@ $verifyReport
   }
 }
 
+# Final session note for chat bridge (even on clean complete)
+try {
+  $finalState = if (Test-Path -LiteralPath $sessionStatePath) {
+    (Get-Content -LiteralPath $sessionStatePath -Raw | ConvertFrom-Json)
+  } else { $null }
+  $outcome = if ($finalState -and $finalState.outcome) { [string]$finalState.outcome } else { 'exited' }
+  if ($outcome -ne 'complete' -and $outcome -ne '') {
+    # blocked paths already alerted via Write-Handover; ensure inbox has a closing line
+    Log ("runner-exit outcome={0}" -f $outcome)
+  } elseif ($outcome -eq 'complete') {
+    Log 'runner-exit outcome=complete (no needs-you)'
+  }
+} catch {}
 Log '==== autopro runner exited ===='

@@ -536,8 +536,13 @@ function joinLedgerAlarmKey(jr = {}) {
  */
 function ensureJoinAlarmScript() {
   const src = path.join(SKILL_ROOT, 'scripts', 'join-alarm-loud.ps1')
+  const chimeSrc = path.join(THEATER_DIR, 'assets', 'join-chime.wav')
+  const chimeDst = path.join(STATE_ROOT, 'join-chime.wav')
   try {
     fs.mkdirSync(STATE_ROOT, { recursive: true })
+    if (fs.existsSync(chimeSrc)) {
+      fs.copyFileSync(chimeSrc, chimeDst)
+    }
     if (fs.existsSync(src)) {
       fs.copyFileSync(src, JOIN_ALERT_PS1)
       return
@@ -1363,25 +1368,44 @@ function purgeJunkSessions() {
 }
 
 /**
- * Drop true corpses only (no ledger identity). Does NOT remove ledger projectors —
- * those are separate ledgers that must stay visible on the shared board.
- * Never kills live owner runners.
+ * Board "Purge dead" contract (matches button title: no live pid):
+ *   - Never remove ORCH desk rows
+ *   - Never remove a lane with live workerAlive/pidAlive
+ *   - Remove corpses always
+ *   - When force (button): remove ANY other dead lane — including disarmed
+ *     owners that still have a ledger title (the old logic required !ledgerPath
+ *     so soak leftovers / blocked fleets sat forever and the button looked broken)
+ *
+ * Soft mode (force=false): corpses only + empty fleets (used by internal cleanup).
  */
+function shouldPurgeDeadSession(s, { force = true } = {}) {
+  if (!s?.sessionId) return false
+  if (/^(orch|orchestrator)$/i.test(String(s.role || ''))) return false
+  // Live process probe from enrich — never wipe a coding/armed runner
+  if (s.pidAlive === true || s.workerAlive === true) return false
+  if (s.corpse === true) return true
+  if (!force) return false
+  // force=true (operator button): every non-live subagent/projector lane goes
+  return true
+}
+
 function purgeDeadSessions({ force = true } = {}) {
   let n = 0
   const enriched = listSessionsEnriched()
   for (const s of enriched) {
-    if (!s?.sessionId) continue
-    if (s.isWorkerOwner && s.pidAlive) continue
-    // Keep separate ledgers on the shared page
-    if (s.ledgerProjector) continue
-    if (s.corpse || (force && s.workerDead && !s.pidAlive && !s.workerAlive && !s.ledgerPath && !s.ledgerTitle)) {
-      try {
-        unregisterSession(s.sessionId)
-        n++
-        armBridgeLog(`purge-dead session=${s.sessionId} corpse=${!!s.corpse}`)
-      } catch { /* ignore */ }
-    }
+    if (!shouldPurgeDeadSession(s, { force })) continue
+    try {
+      const root = s.primaryRepoPath || s.repoPath || s.armRepoDir || ''
+      // Stop the rematerialize zombie loop: clear flags + mark joins purged
+      // BEFORE unregister so the next GET /api/sessions cannot revive the lane.
+      clearSessionArmFlags(root, s.sessionId)
+      markJoinRequestsPurged(s.sessionId, 'purge-dead')
+      unregisterSession(s.sessionId)
+      n++
+      armBridgeLog(
+        `purge-dead session=${s.sessionId} corpse=${!!s.corpse} arm=${s.armDisplay || ''} status=${s.status || ''}`,
+      )
+    } catch { /* ignore */ }
   }
   // Collapse empty fleets after session wipe
   try {
@@ -1407,7 +1431,9 @@ function purgeDeadSessions({ force = true } = {}) {
       }
     }
   } catch { /* ignore */ }
-  if (n) broadcast('sessions', listSessionsEnriched())
+  // Always rebroadcast so the board drops wiped lanes even when n===0 (client refresh)
+  broadcast('sessions', listSessionsEnriched())
+  broadcast('fleets', fleetsByRepoRoot())
   return n
 }
 
@@ -1594,10 +1620,21 @@ function registerSession(body) {
       return registerSession(canon)
     }
   }
-  const ledgerPath = body.ledgerPath || existing?.ledgerPath || null
-  let todos = body.todo
-  if ((!todos || !todos.length) && ledgerPath) todos = parseLedgerTodos(ledgerPath)
-  todos = todos || existing?.todo || []
+  // Explicit ledgerPath (including null/'' ) wins so ultra can clear a join-time path.
+  // Auto-parse ledger ONLY when caller did not send todo at all — empty [] is intentional
+  // (ORCH fleet card / band lanes) and must not re-inflate the whole master ledger.
+  const ledgerPath = Object.prototype.hasOwnProperty.call(body, 'ledgerPath')
+    ? (body.ledgerPath || null)
+    : (existing?.ledgerPath || null)
+  let todos
+  if (Object.prototype.hasOwnProperty.call(body, 'todo') && Array.isArray(body.todo)) {
+    todos = body.todo
+  } else if (ledgerPath) {
+    todos = parseLedgerTodos(ledgerPath)
+  } else {
+    todos = existing?.todo || []
+  }
+  todos = todos || []
   const counts = body.counts || deriveCounts(todos)
   const slice = body.slice || activeSlice(todos)
   const total = counts.pending + counts.inProgress + counts.done + counts.blocked + (counts.standby || 0)
@@ -1649,7 +1686,8 @@ function registerSession(body) {
     localNo: localNo || lane,
     subAgentNo: localNo || lane,
     subAgentId: localSa || `SA-${lane}`,
-    role: body.role === 'orch' ? 'orch' : 'subagent',
+    // accept orchestrator|orch (ultra board-sync historically sent "orchestrator")
+    role: /^(orch|orchestrator)$/i.test(String(body.role || '')) ? 'orch' : 'subagent',
     fleetId: fleetMeta?.fleetId || existing?.fleetId || body.fleetId || null,
     orchSessionId: fleetMeta?.orchSessionId || existing?.orchSessionId || null,
     repoId: ident.repoId,
@@ -1717,7 +1755,20 @@ function heartbeatSession(sessionId, body = {}) {
   const existing = readJsonSafe(file)
   if (!existing) return null
 
-  if (body.ledgerPath || existing.ledgerPath) {
+  // Explicit todo from ultra/board-sync always wins — never clobber with master ledger.
+  const hasExplicitTodo = Object.prototype.hasOwnProperty.call(body, 'todo') && Array.isArray(body.todo)
+  if (Object.prototype.hasOwnProperty.call(body, 'ledgerPath')) {
+    existing.ledgerPath = body.ledgerPath || null
+  }
+  if (hasExplicitTodo) {
+    existing.todo = body.todo
+    if (!body.counts) existing.counts = deriveCounts(body.todo)
+    if (!body.slice) existing.slice = activeSlice(body.todo)
+    const c = existing.counts || deriveCounts(body.todo)
+    const total =
+      (c.pending || 0) + (c.inProgress || 0) + (c.done || 0) + (c.blocked || 0) + (c.standby || 0)
+    existing.progress = total > 0 ? (c.done || 0) / total : 0
+  } else if (body.ledgerPath || existing.ledgerPath) {
     const lp = body.ledgerPath || existing.ledgerPath
     const todos = parseLedgerTodos(lp)
     if (todos.length) {
@@ -1736,6 +1787,16 @@ function heartbeatSession(sessionId, body = {}) {
   if (body.status) existing.status = body.status
   if (body.stopReason !== undefined) existing.stopReason = body.stopReason
   if (body.pid != null) existing.pid = body.pid
+  if (body.runnerPid != null) existing.runnerPid = body.runnerPid
+  // Structured coding pid (0 between slices). Keep 0 so enrich can prefer disk file
+  // while the worker is live, and clear false "coding" after the worker exits.
+  if (body.workerPid != null) {
+    const wp = Number(body.workerPid)
+    existing.workerPid = Number.isFinite(wp) && wp > 0 ? wp : 0
+  }
+  if (body.role && /^(orch|orchestrator|subagent)$/i.test(String(body.role))) {
+    existing.role = /^(orch|orchestrator)$/i.test(String(body.role)) ? 'orch' : 'subagent'
+  }
   // Never wipe join identity with empty patches
   if (body.branch && String(body.branch).trim()) existing.branch = String(body.branch).trim()
   if (body.repoPath && String(body.repoPath).trim()) existing.repoPath = String(body.repoPath).trim()
@@ -1747,7 +1808,6 @@ function heartbeatSession(sessionId, body = {}) {
   if (body.handoverPath) existing.handoverPath = body.handoverPath
   if (body.counts) existing.counts = body.counts
   if (body.slice) existing.slice = body.slice
-  if (body.todo) existing.todo = body.todo
   if (body.stats) existing.stats = mergeStats(existing.stats, body.stats)
   if (body.bookmarks) existing.bookmarks = body.bookmarks
 
@@ -2054,9 +2114,59 @@ function scheduleSessionWipe(sessionId, ms = COMPLETE_WIPE_MS) {
 }
 
 /**
+ * Clear autopro-on.<sessionId> flags under a repo root (stale arm after runner death).
+ * Best-effort — never throws into request path.
+ */
+function clearSessionArmFlags(repoRoot, sessionId) {
+  if (!repoRoot || !sessionId) return 0
+  let n = 0
+  try {
+    const scratch = path.join(String(repoRoot), '.claude', 'scratch')
+    if (!fs.existsSync(scratch)) return 0
+    const sid = String(sessionId)
+    for (const f of fs.readdirSync(scratch)) {
+      if (!f.startsWith('autopro-on')) continue
+      if (f.includes(sid) || f.includes(sid.slice(0, 16))) {
+        try {
+          fs.unlinkSync(path.join(scratch, f))
+          n++
+        } catch { /* ignore */ }
+      }
+    }
+  } catch { /* ignore */ }
+  return n
+}
+
+/**
+ * Mark join requests for a session as purged so rematerialize will not revive them.
+ */
+function markJoinRequestsPurged(sessionId, reason = 'purge-dead') {
+  if (!sessionId) return 0
+  let n = 0
+  try {
+    for (const jr of listJoinRequests()) {
+      if (!jr || String(jr.sessionId) !== String(sessionId)) continue
+      if (jr.status === 'purged' || jr.status === 'left' || jr.status === 'denied') continue
+      jr.status = 'purged'
+      jr.purgedAt = nowIso()
+      jr.purgedReason = reason
+      jr.updatedAt = nowIso()
+      try {
+        writeJson(joinPath(jr.id), jr)
+        n++
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+  return n
+}
+
+/**
  * Re-materialize approved join lanes whose session files were wiped (restart race,
- * preflight, complete wipe). Keeps the board from going blank while a runner still
- * heartbeats / holds an approved join. Idempotent.
+ * preflight). Keeps the board from going blank while a runner is STILL ALIVE.
+ *
+ * CRITICAL (2026-07-19): never restore from a stale `autopro-on` flag alone.
+ * Flag-without-live-pid is how Purge dead looked broken — toast said "N removed"
+ * then rematerialize resurrected the lanes on the next GET /api/sessions (board poll).
  */
 function rematerializeApprovedJoins() {
   const restored = []
@@ -2064,17 +2174,21 @@ function rematerializeApprovedJoins() {
     if (!jr?.sessionId) continue
     if (isJunkJoin(jr)) continue
     // Skip pure test session ids from test-showtime / soak noise
-    if (/^(v2a_|v2b_|v2d_|v2old_|v2done_|sess_armproof_|sess_codex|producer-main|ext-side|sess_demo_|sess_absorb_)/i.test(String(jr.sessionId))) {
+    if (/^(v2a_|v2b_|v2d_|v2old_|v2done_|sess_armproof_|sess_codex|producer-main|ext-side|sess_demo_|sess_absorb_|sess_purge_)/i.test(String(jr.sessionId))) {
+      continue
+    }
+    // Soak ledgers are disposable — never resurrect
+    if (/soak|stub-soak|serial-soak/i.test(String(jr.ledgerTitle || jr.repoId || jr.repoPath || ''))) {
       continue
     }
     const existing = readJsonSafe(sessionPath(jr.sessionId))
     if (existing) continue
     const pid = Number(jr.pid || jr.runnerPid || 0) || 0
     const live = isPidAlive(pid)
-    // Flag on disk for this session under repo root (armed runner still working)
+    // Flag on disk for this session under repo root (may be STALE after runner death)
     let flagged = false
+    const root = jr.repoPath || jr.primaryRepoPath || ''
     try {
-      const root = jr.repoPath || jr.primaryRepoPath || ''
       if (root) {
         const scratch = path.join(root, '.claude', 'scratch')
         if (fs.existsSync(scratch)) {
@@ -2085,9 +2199,18 @@ function rematerializeApprovedJoins() {
         }
       }
     } catch { /* ignore */ }
-    // STRICT: only restore if runner pid is alive OR autopro-on flag still present.
-    // Never resurrect historical approved joins by timestamp alone (blank→junk flood).
-    if (!live && !flagged) continue
+
+    // ONLY restore when the join's runner pid is actually alive.
+    // Stale flags without a live process caused infinite zombie columns after Purge dead.
+    if (!live) {
+      if (flagged) {
+        const cleared = clearSessionArmFlags(root, jr.sessionId)
+        armBridgeLog(
+          `rematerialize SKIP dead session=${jr.sessionId} join=${jr.id} clearedFlags=${cleared} (stale autopro-on)`,
+        )
+      }
+      continue
+    }
     try {
       const s = registerSession({
         sessionId: jr.sessionId,
@@ -2099,6 +2222,7 @@ function rematerializeApprovedJoins() {
         ledgerHash: jr.ledgerHash,
         logPath: jr.logPath,
         pid: pid || 0,
+        runnerPid: pid || 0,
         status: jr.statusDesired || 'running',
         alarms: jr.alarms || undefined,
         timer: jr.timer || undefined,
@@ -2109,7 +2233,7 @@ function rematerializeApprovedJoins() {
       jr.updatedAt = nowIso()
       try { writeJson(joinPath(jr.id), jr) } catch { /* ignore */ }
       restored.push(jr.sessionId)
-      armBridgeLog(`rematerialize approved join session=${jr.sessionId} join=${jr.id} live=${live} flagged=${flagged}`)
+      armBridgeLog(`rematerialize approved join session=${jr.sessionId} join=${jr.id} live=true`)
     } catch (e) {
       armBridgeLog(`rematerialize fail session=${jr.sessionId} ${e?.message || e}`)
     }
@@ -2198,10 +2322,17 @@ function preflightSweep(opts = {}) {
 function addNote(sessionId, body) {
   const s = readJsonSafe(sessionPath(sessionId))
   if (!s) return null
+  const fromRaw = String(body.from || 'operator').trim().toLowerCase() || 'operator'
+  // Normalize aliases so the board can route speech bubbles + desk transcript
+  let from = fromRaw
+  if (/^(sa|worker|subagent|agent)$/i.test(fromRaw)) from = 'worker'
+  if (/^(orch|orchestrator|system)$/i.test(fromRaw)) from = 'orch'
+  if (/^(op|operator|human|you)$/i.test(fromRaw)) from = 'operator'
   const note = {
     id: uid('n'),
     text: String(body.text || '').trim(),
-    from: body.from || 'operator',
+    from,
+    kind: body.kind || (from === 'orch' ? 'say' : from === 'worker' ? 'report' : 'tell'),
     at: nowIso(),
     sliceId: body.sliceId || s.slice?.id || null,
   }
@@ -2209,6 +2340,17 @@ function addNote(sessionId, body) {
   s.notes = s.notes || []
   s.notes.unshift(note)
   s.notes = s.notes.slice(0, 100)
+  // Latest ORCH/worker line for speech-bubble clients (also derived client-side)
+  if (from === 'orch' || from === 'worker') {
+    s.orchSpeech = {
+      text: note.text,
+      from,
+      kind: note.kind,
+      at: note.at,
+      sliceId: note.sliceId,
+      noteId: note.id,
+    }
+  }
   s.updatedAt = nowIso()
   writeJson(sessionPath(sessionId), s)
   broadcast('sessions', listSessionsEnriched())
@@ -2233,6 +2375,26 @@ function addQuestion(sessionId, body) {
   s.status = 'needs_input'
   s.stopReason = `SA needs input: ${q.text.slice(0, 80)}`
   s.updatedAt = nowIso()
+  // Mirror into notes so ORCH speech bubble + NOTES tab share one transcript
+  s.notes = s.notes || []
+  s.notes.unshift({
+    id: uid('n'),
+    text: q.text,
+    from: 'orch',
+    kind: 'hold',
+    at: q.at,
+    sliceId: q.sliceId,
+    questionId: q.id,
+  })
+  s.notes = s.notes.slice(0, 100)
+  s.orchSpeech = {
+    text: q.text,
+    from: 'orch',
+    kind: 'hold',
+    at: q.at,
+    sliceId: q.sliceId,
+    questionId: q.id,
+  }
   pushSentinel(s, `SA hold opened on ${q.sliceId || 'lane'}: ${q.text.slice(0, 100)}`, 'warn')
   writeJson(sessionPath(sessionId), s)
   const e = enrich(s)
@@ -2252,11 +2414,24 @@ function answerQuestion(sessionId, qid, body) {
   s.notes = s.notes || []
   s.notes.unshift({
     id: uid('n'),
-    text: `Answered ${qid}: ${q.answer}`,
+    text: `You → ORCH: ${q.answer}`,
     from: 'operator',
+    kind: 'answer',
     at: nowIso(),
     sliceId: q.sliceId,
+    questionId: qid,
   })
+  // ORCH ack so the speech bubble can show "got your answer"
+  s.notes.unshift({
+    id: uid('n'),
+    text: `ORCH relayed your answer to the worker: ${q.answer}`,
+    from: 'orch',
+    kind: 'ack',
+    at: nowIso(),
+    sliceId: q.sliceId,
+    questionId: qid,
+  })
+  s.notes = s.notes.slice(0, 100)
   const stillOpen = (s.questions || []).some((x) => x.status === 'open')
   if (!stillOpen && s.status === 'needs_input') {
     s.status = 'running'
@@ -3021,6 +3196,12 @@ async function main() {
     } catch {}
     try {
       if (fs.existsSync(PID_FILE)) fs.unlinkSync(PID_FILE)
+    } catch {}
+    // The prior instance died uncleanly (health probe failed) — drop its token
+    // too, so a fresh one is minted. Otherwise loadOrMintServerToken() re-adopts
+    // the crashed boot's secret, defeating the per-boot token invariant.
+    try {
+      if (fs.existsSync(TOKEN_FILE)) fs.unlinkSync(TOKEN_FILE)
     } catch {}
   }
 

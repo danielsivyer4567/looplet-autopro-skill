@@ -11,6 +11,9 @@ export function normalizeRepoKey(repoPath) {
   p = p.replace(/\/\.worktrees-showtime\/[^/]+$/i, '')
   p = p.replace(/\/\.claude\/worktrees\/[^/]+$/i, '')
   p = p.replace(/\/\.codex-worktrees\/[^/]+$/i, '')
+  // Ultra parallel: …/.worktrees-ultra/<runId>/<B0n> → real repo root for fleet column
+  p = p.replace(/\/\.worktrees-ultra\/[^/]+\/[^/]+$/i, '')
+  p = p.replace(/\/\.worktrees-ultra\/[^/]+$/i, '')
   // Drop trailing /src or empty
   p = p.replace(/\/+$/, '')
   return p.toLowerCase()

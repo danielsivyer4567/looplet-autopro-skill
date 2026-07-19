@@ -121,3 +121,118 @@ function Resolve-IndependentFinalGate {
 
   return $none
 }
+
+<#
+  Invoke-IndependentFinalGate — run the resolved gate and return a verdict object.
+  Called by autopro-runner after the model FINAL_CHECK_STATUS=green marker.
+
+  Returns:
+    @{
+      Ok, ExitCode, Text, Kind, Display
+    }
+#>
+function Invoke-IndependentFinalGate {
+  param(
+    [Parameter(Mandatory = $true)][string]$WorkDir,
+    [switch]$AllowModelOnly
+  )
+
+  $spec = Resolve-IndependentFinalGate -WorkDir $WorkDir
+  if ($spec.Kind -eq 'none') {
+    if ($AllowModelOnly) {
+      return [pscustomobject]@{
+        Ok       = $true
+        ExitCode = 0
+        Text     = 'INDEPENDENT_GATE=skipped (AllowModelOnlyFinalCheck)'
+        Kind     = 'none'
+        Display  = 'model-only'
+      }
+    }
+    return [pscustomobject]@{
+      Ok       = $false
+      ExitCode = 78
+      Text     = 'INDEPENDENT_GATE=none — configure scripts/final-check.ps1, package.json scripts.gate, or AUTOPRO_FINAL_CHECK_CMD'
+      Kind     = 'none'
+      Display  = 'none'
+    }
+  }
+
+  $exe = [string]$spec.Command
+  $args = @($spec.Args)
+  $text = ''
+  $code = -1
+
+  try {
+    # env kind may be a full shell line (e.g. "pwsh -File x.ps1" or "npm test")
+    if ($spec.Kind -eq 'env') {
+      $psi = [System.Diagnostics.ProcessStartInfo]::new()
+      $psi.FileName = if ($IsWindows -or $null -eq $IsWindows) { 'cmd.exe' } else { '/bin/sh' }
+      $psi.Arguments = if ($IsWindows -or $null -eq $IsWindows) { "/c $($spec.Command)" } else { "-c `"$($spec.Command)`"" }
+      $psi.WorkingDirectory = $WorkDir
+      $psi.UseShellExecute = $false
+      $psi.RedirectStandardOutput = $true
+      $psi.RedirectStandardError = $true
+      $psi.CreateNoWindow = $true
+      $proc = [System.Diagnostics.Process]::Start($psi)
+      $stdout = $proc.StandardOutput.ReadToEnd()
+      $stderr = $proc.StandardError.ReadToEnd()
+      if (-not $proc.WaitForExit(600000)) {
+        try { $proc.Kill($true) } catch { try { $proc.Kill() } catch {} }
+        $code = 124
+        $text = "INDEPENDENT_GATE_TIMEOUT after 600s`n$stdout`n$stderr"
+      } else {
+        $code = $proc.ExitCode
+        $text = (@($stdout, $stderr) | Where-Object { $_ }) -join "`n"
+      }
+      try { $proc.Dispose() } catch {}
+    } else {
+      # script / npm-gate: FileName + Args
+      $psi = [System.Diagnostics.ProcessStartInfo]::new()
+      # Resolve pwsh/npm on PATH
+      $cmdInfo = Get-Command $exe -ErrorAction SilentlyContinue
+      $psi.FileName = if ($cmdInfo -and $cmdInfo.Source) { $cmdInfo.Source } else { $exe }
+      $psi.WorkingDirectory = $WorkDir
+      $psi.UseShellExecute = $false
+      $psi.RedirectStandardOutput = $true
+      $psi.RedirectStandardError = $true
+      $psi.CreateNoWindow = $true
+      foreach ($a in $args) {
+        if ($null -ne $a -and [string]$a -ne '') { [void]$psi.ArgumentList.Add([string]$a) }
+      }
+      $proc = [System.Diagnostics.Process]::Start($psi)
+      $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+      $stderrTask = $proc.StandardError.ReadToEndAsync()
+      if (-not $proc.WaitForExit(600000)) {
+        try { $proc.Kill($true) } catch { try { $proc.Kill() } catch {} }
+        $code = 124
+        $text = 'INDEPENDENT_GATE_TIMEOUT after 600s'
+      } else {
+        $code = $proc.ExitCode
+        $stdout = ''; $stderr = ''
+        try { $stdout = $stdoutTask.GetAwaiter().GetResult() } catch {}
+        try { $stderr = $stderrTask.GetAwaiter().GetResult() } catch {}
+        $text = (@($stdout, $stderr) | Where-Object { $_ }) -join "`n"
+      }
+      try { $proc.Dispose() } catch {}
+    }
+  } catch {
+    return [pscustomobject]@{
+      Ok       = $false
+      ExitCode = 1
+      Text     = ("INDEPENDENT_GATE_THROW: {0}" -f $_.Exception.Message)
+      Kind     = $spec.Kind
+      Display  = $spec.Display
+    }
+  }
+
+  $ok = ($code -eq 0)
+  # Optional: if gate prints FINAL_CHECK_STATUS=red, fail even on exit 0
+  if ($ok -and $text -match '(?i)FINAL_CHECK_STATUS\s*=\s*red\b') { $ok = $false }
+  return [pscustomobject]@{
+    Ok       = [bool]$ok
+    ExitCode = [int]$code
+    Text     = [string]$text
+    Kind     = $spec.Kind
+    Display  = $spec.Display
+  }
+}

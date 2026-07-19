@@ -73,6 +73,19 @@ it will match CLAW's truth. Gap audit: `references/MAP-VS-CLAW.md`.
 | Arm bridge | `%USERPROFILE%\.claude\scratch\autopro-theater\arm-on-approve-bridge.log` |
 | Per-repo arm | `<repo>\.claude\scratch\arm-on-approve.log` |
 | Runner | `<repo>\.claude\scratch\autopro.log` |
+| **Needs you (human)** | `<repo>\.claude\scratch\AUTOPRO-NEEDS-YOU.md` |
+| **Chat inbox (JSONL)** | `<repo>\.claude\scratch\autopro-chat-inbox.jsonl` |
+| Global inbox | `%USERPROFILE%\.claude\scratch\autopro-theater\chat-inbox.jsonl` |
+
+## Supervisor v1 (serial)
+
+- **ORCH** = desk only (not the process that spawns workers).
+- **Runner** = conductor: spawns workers, kickstart-retry on early death, writes needs-you on block.
+- Prefer: `launch-showtime` starts `autopro-watch.ps1` minimized (chat bridge). Manual:  
+  `pwsh -NoProfile -File $HOME/.claude/skills/autopro/scripts/autopro-watch.ps1 -Root <repo> -UntilDisarmed`  
+- Or: `Get-Content <repo>\.claude\scratch\autopro-chat-inbox.jsonl -Wait`  
+- Full operator path: `references/WORKFLOW.md`
+- Offline green: `pwsh -NoProfile -File ...\scripts\test-autopro-supervisor.ps1` → `SUPERVISOR_CHECK=green`
 
 ## Arm from a repo (after ledger `Approved: yes`)
 
